@@ -203,9 +203,9 @@ def scale_test(
 
 def load_holder(args: argparse.Namespace) -> Holder:
     """Build a Holder from the input JSON and x/y/z dimensions given on the command line."""
-    name = args.name or os.path.splitext(os.path.basename(args.input))[0]
+    name = args.name or os.path.splitext(os.path.basename(args.in_path))[0]
     holder = Holder(name, x=args.x, y=args.y, z=args.z)
-    for row in load_rows_from_path(args.input):
+    for row in load_rows_from_path(args.in_path):
         holder.add_row(row)
     return holder
 
@@ -216,11 +216,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     # arguments shared by both holder types
     holder_args = argparse.ArgumentParser(add_help=False)
-    holder_args.add_argument('input', help='path to slot/row JSON file')
+    holder_args.add_argument(
+        '-i', '--in',
+        dest='in_path',
+        metavar='PATH',
+        required=True,
+        help='path to slot/row JSON file'
+    )
     holder_args.add_argument('-x', type=int, required=True, help='width in gridfinity units')
     holder_args.add_argument('-y', type=int, required=True, help='depth in gridfinity units')
     holder_args.add_argument('-z', type=float, required=True, help='height in gridfinity units')
-    holder_args.add_argument('-o', '--output', help='STL export path (not exported if omitted)')
+    holder_args.add_argument(
+        '-o', '--out',
+        dest='out_path',
+        metavar='PATH',
+        help='STL export path (not exported if omitted)'
+    )
     holder_args.add_argument('-n', '--name', help='holder name (default: input filename)')
     holder_args.add_argument(
         '--arrange',
@@ -245,7 +256,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     scale = subparsers.add_parser('scale-test', help='test fitments for a diameter at several scales')
     scale.add_argument('diameter', type=float, help='slot diameter (mm)')
     scale.add_argument('depth', type=float, help='slot depth (mm)')
-    scale.add_argument('-o', '--output', required=True, help='directory to export STLs into')
+    scale.add_argument(
+        '-o', '--out',
+        dest='out_path',
+        metavar='DIR',
+        required=True,
+        help='directory to export STLs into'
+    )
     scale.add_argument(
         '-s', '--scales',
         type=float,
@@ -262,8 +279,8 @@ def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
 
     if args.command == 'scale-test':
-        os.makedirs(args.output, exist_ok=True)
-        scale_test(args.diameter, args.depth, args.output, args.scales, preview=not args.no_show)
+        os.makedirs(args.out_path, exist_ok=True)
+        scale_test(args.diameter, args.depth, args.out_path, args.scales, preview=not args.no_show)
         return
 
     holder = load_holder(args)
@@ -275,8 +292,8 @@ def main(argv: list[str] | None = None) -> None:
 
     if not args.no_show:
         show(part)
-    if args.output:
-        export_as_stl(part, args.output)
+    if args.out_path:
+        export_as_stl(part, args.out_path)
 
 # %%
 

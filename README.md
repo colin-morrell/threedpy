@@ -57,10 +57,10 @@ viewer at <http://localhost:32323> (set `YACV_PORT` to change the port).
 poetry run threedpy --help
 
 # holder with evenly spaced rows of slots (x/y/z in gridfinity units)
-poetry run threedpy rowed src/threedpy/examples/husky-sockets-vert-mm.json -x 2 -y 3 -z 3 -o holder.stl
+poetry run threedpy rowed -i src/threedpy/examples/husky-sockets-vert-mm.json -x 2 -y 3 -z 3 -o holder.stl
 
 # holder with manually positioned slots
-poetry run threedpy positional input.json -x 2 -y 3 -z 3 -o holder.stl
+poetry run threedpy positional -i input.json -x 2 -y 3 -z 3 -o holder.stl
 
 # test fitments for a 12.95mm diameter, 7mm deep slot at several scales
 poetry run threedpy scale-test 12.95 7 -o tests/ -s 1.01 1.02 1.03
