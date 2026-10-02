@@ -1,0 +1,31 @@
+[project]
+name = "threedpy"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Colin Morrell",email = "colin.l.morrell@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "build123d (>=0.10.0,<0.11.0)",  # gridfinity_build123d needs 0.10 (uses ShapePredicate)
+    "ocp-gordon (<0.3.0)",  # build123d dependency; 0.3+ needs OCP 8, build123d 0.10 needs OCP 7.8
+    "gridfinity_build123d @ git+https://github.com/Ruudjhuu/gridfinity_build123d.git",
+    "yacv-server (>=0.12.1,<0.13.0)",
+    "mypy (>=2.3.1,<3.0.0)"
+]
+
+[project.scripts]
+threedpy = "threedpy.generate:main"
+
+[tool.poetry]
+packages = [{include = "threedpy", from = "src"}]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[dependency-groups]
+dev = [
+    "ipython (>=9.17.1,<10.0.0)"
+]

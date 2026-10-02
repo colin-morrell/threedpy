@@ -1,0 +1,11 @@
+{
+    "shape": "round",
+    "scale": 1.02,
+    "slots": [
+        {"label": "E4", "diameter": 11.7, "depth": 10},
+        {"label": "E5", "diameter": 11.7, "depth": 10},
+        {"label": "E6", "diameter": 13.1, "depth": 10},
+        {"label": "E7", "diameter": 13.1, "depth": 10},
+        {"label": "E8", "diameter": 13.1, "depth": 10}
+    ]
+}
