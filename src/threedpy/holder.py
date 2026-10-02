@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import os
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
@@ -17,7 +18,7 @@ from build123d import (
     extrude
 )
 
-from threedpy.constants import FONT_PATH, GFU_GRID, GFU_HEIGHT
+from threedpy.constants import FONT_PATH, GFU_GRID, GFU_GRID_NOMINAL, GFU_HEIGHT
 from threedpy.util import DoublyLinkedList
 
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
@@ -244,7 +245,6 @@ class Holder:
     # TODO --> auto allocate slots given # rows
     # TODO --> auto allocate slots/rows given GFU
     # TODO --> font_size
-    # TODO --> get x/y/z from json
 
     name: str = ''
     rows: DoublyLinkedList[Row] = field(default_factory=DoublyLinkedList)
@@ -418,16 +418,97 @@ class Holder:
         return len(self.rows)
 
 
+HOLDER_KEYS = ('name', 'x', 'y', 'z', 'x_mm', 'y_mm', 'z_mm')
+
+
+def _gfu_from_json(data: dict[str, Any], axis: str, unit_mm: float, whole: bool) -> float | None:
+    """ Read one holder dimension in GFU, given as either '<axis>' (GFU) or '<axis>_mm'.
+
+    --> mm values are converted using the nominal unit size, and rounded up to whole units if
+        whole is set (gridfinity X/Y must be whole units).
+    --> Returns None if the dimension isn't given."""
+
+    gfu, mm = data.get(axis), data.get(axis + '_mm')
+    if gfu is not None and mm is not None:
+        raise ValueError('[!] holder: give {0} or {0}_mm, not both'.format(axis))
+    if mm is not None:
+        gfu = mm / unit_mm
+        if whole:
+            # round() first so float error (e.g. 84 / 42 = 2.0000000001) doesn't add a unit
+            gfu = math.ceil(round(gfu, 6))
+        logger.info('holder: {}_mm={} -> {}={}'.format(axis, mm, axis, gfu))
+    if gfu is not None and whole and not float(gfu).is_integer():
+        raise ValueError('[!] holder: {} must be a whole number of units, got {}'.format(axis, gfu))
+    return gfu
+
+
+def load_holder(
+        data: dict[str, Any],
+        name: str = '',
+        x: int | None = None,
+        y: int | None = None,
+        z: float | None = None
+    ) -> Holder:
+    """ Build a Holder (and its Rows) from a parsed JSON object.
+
+    --> Holder settings live under an optional top-level 'holder' object: 'name', and each
+        dimension as either GFU ('x', 'y', 'z') or mm ('x_mm', 'y_mm', 'z_mm').
+    --> X/Y given in mm are rounded up to whole units; Z may be fractional.
+    --> name/x/y/z arguments (e.g. from the CLI) override the JSON values.
+    --> Missing dimensions are left at 0."""
+
+    holder_data = data.get('holder', {})
+    unknown = set(holder_data) - set(HOLDER_KEYS)
+    if unknown:
+        raise ValueError('[!] holder: unknown key(s): {}'.format(', '.join(sorted(unknown))))
+
+    dims = {
+        'x': _gfu_from_json(holder_data, 'x', GFU_GRID_NOMINAL, whole=True),
+        'y': _gfu_from_json(holder_data, 'y', GFU_GRID_NOMINAL, whole=True),
+        'z': _gfu_from_json(holder_data, 'z', GFU_HEIGHT, whole=False),
+    }
+    for axis, override in (('x', x), ('y', y), ('z', z)):
+        if override is not None:
+            dims[axis] = override
+
+    holder = Holder(
+        name=name or holder_data.get('name', ''),
+        x=int(dims['x'] or 0),
+        y=int(dims['y'] or 0),
+        z=float(dims['z'] or 0.0)
+    )
+    for row in load_rows(data):
+        holder.add_row(row)
+    return holder
+
+
+def load_holder_from_path(
+        path: str | os.PathLike[str],
+        name: str = '',
+        x: int | None = None,
+        y: int | None = None,
+        z: float | None = None
+    ) -> Holder:
+    """Build a Holder from a JSON file. The name defaults to the filename if not set in the JSON."""
+    logger.info('loading holder from {}'.format(path))
+    with open(path) as f:
+        holder = load_holder(json.load(f), name=name, x=x, y=y, z=z)
+    if not holder.name:
+        holder.name = os.path.splitext(os.path.basename(path))[0]
+    return holder
+
+
 def load_rows(data: dict[str, Any]) -> list[Row]:
     """ Build Rows from parsed JSON object.
 
     --> Slots are grouped under 'rows', each with its own 'slots' list and an
         optional 'name'; a top-level 'slots' list is loaded as a single row.
-    --> Top-level keys (e.g. shape, scale) are defaults for every slot
+    --> Top-level keys (e.g. shape, scale) are defaults for every slot, except 'holder'
+        (see load_holder)
     --> Other row-level keys are defaults for that row's slots
     --> Values set on an individual slot override both."""
 
-    defaults = {key: value for key, value in data.items() if key not in ('rows', 'slots')}
+    defaults = {key: value for key, value in data.items() if key not in ('holder', 'rows', 'slots')}
     rows_data = data['rows'] if 'rows' in data else [{'slots': data['slots']}]
     rows = []
     for row_data in rows_data:
@@ -454,8 +535,6 @@ def load_slots_from_path(path: str | os.PathLike[str]) -> list[Slot]:
     logger.info('loading slots from {}'.format(path))
     with open(path) as f:
         return load_slots(json.load(f))
-
-
 
 
 def main() -> None:

@@ -28,6 +28,7 @@ from threedpy.holder import (
     Row,
     Shape,
     Slot,
+    load_holder_from_path,
     load_rows_from_path,
     load_slots_from_path
 )
@@ -201,12 +202,14 @@ def scale_test(
     return None
 
 
-def load_holder(args: argparse.Namespace) -> Holder:
-    """Build a Holder from the input JSON and x/y/z dimensions given on the command line."""
-    name = args.name or os.path.splitext(os.path.basename(args.in_path))[0]
-    holder = Holder(name, x=args.x, y=args.y, z=args.z)
-    for row in load_rows_from_path(args.in_path):
-        holder.add_row(row)
+def holder_from_args(args: argparse.Namespace) -> Holder:
+    """Build a Holder from the input JSON, with any name/x/y/z given on the command line
+    overriding the JSON's 'holder' settings."""
+    holder = load_holder_from_path(args.in_path, name=args.name, x=args.x, y=args.y, z=args.z)
+    missing = [axis for axis in ('x', 'y', 'z') if not getattr(holder, axis)]
+    if missing:
+        sys.exit('[!] {}: no {} dimension(s) in the JSON "holder" object or on the command line'
+                 .format(args.in_path, '/'.join(missing)))
     return holder
 
 
@@ -223,16 +226,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         required=True,
         help='path to slot/row JSON file'
     )
-    holder_args.add_argument('-x', type=int, required=True, help='width in gridfinity units')
-    holder_args.add_argument('-y', type=int, required=True, help='depth in gridfinity units')
-    holder_args.add_argument('-z', type=float, required=True, help='height in gridfinity units')
+    holder_args.add_argument('-x', type=int, help='width in gridfinity units (overrides JSON)')
+    holder_args.add_argument('-y', type=int, help='depth in gridfinity units (overrides JSON)')
+    holder_args.add_argument('-z', type=float, help='height in gridfinity units (overrides JSON)')
     holder_args.add_argument(
         '-o', '--out',
         dest='out_path',
         metavar='PATH',
         help='STL export path (not exported if omitted)'
     )
-    holder_args.add_argument('-n', '--name', help='holder name (default: input filename)')
+    holder_args.add_argument('-n', '--name', help='holder name (overrides JSON; default: input filename)')
     holder_args.add_argument(
         '--arrange',
         action='store_true',
@@ -283,7 +286,7 @@ def main(argv: list[str] | None = None) -> None:
         scale_test(args.diameter, args.depth, args.out_path, args.scales, preview=not args.no_show)
         return
 
-    holder = load_holder(args)
+    holder = holder_from_args(args)
     if args.command == 'positional':
         part = positional_holder(holder, arrange=args.arrange)
     else:
