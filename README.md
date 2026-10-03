@@ -57,10 +57,10 @@ viewer at <http://localhost:32323> (set `YACV_PORT` to change the port).
 poetry run threedpy --help
 
 # storage block laid out and sized by the JSON's "storage_block" object
-poetry run threedpy build -i src/threedpy/examples/husky-sockets-vert-mm.json -o block.stl
+poetry run threedpy build src/threedpy/examples/husky-sockets-vert-mm.json -o block.stl
 
 # override the JSON's layout type and size
-poetry run threedpy build -i input.json -t positional -x 2 -y 3 -z 3 -o block.stl
+poetry run threedpy build input.json -t positional -x 2 -y 3 -z 3 -o block.stl
 
 # test fitments for a 12.95mm diameter, 7mm deep slot at several scales
 poetry run threedpy scale-test 12.95 7 -o tests/ -s 1.01 1.02 1.03

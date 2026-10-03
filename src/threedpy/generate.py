@@ -240,13 +240,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         'build',
         help='storage block laid out by its JSON config (rowed or positional)'
     )
-    build.add_argument(
-        '-i', '--in',
-        dest='in_path',
-        metavar='PATH',
-        required=True,
-        help='path to slot/row JSON file'
-    )
+    build.add_argument('in_path', metavar='PATH', help='path to slot/row JSON file')
     build.add_argument(
         '-t', '--type',
         choices=[block_type.value for block_type in StorageBlockType],
