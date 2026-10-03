@@ -47,8 +47,9 @@ class Shape(Enum):
 
 @dataclass
 class Slot:
-    """
-    A single cavity for storing a socket etc vertically.
+    """Slot
+
+    A single storage cavity.
 
     --> All measurements in mm unless otherwise stated.
     --> From a top-down view of the work surface, X is left/right and Y is up/down.
@@ -73,6 +74,7 @@ class Slot:
             self.shape = Shape(self.shape)
 
     def build_shape(self) -> None:
+        """Build the slot's shape using build123d."""
         if self.shape in (Shape.ROUND, Shape.HORIZONTAL):
             Cylinder(
                 self.scaled_radius,
@@ -93,8 +95,6 @@ class Slot:
             raise ValueError('[!] invalid slot shape: {}'.format(self.shape))
 
     def build_label(self) -> None:
-        # TODO --> add default font_path to config file
-        # TODO --> allow overloading font in function call
         Text(
             self.label,
             font_size=self.font_size,
@@ -140,13 +140,12 @@ class Slot:
 
     @property
     def z(self) -> float:
-        # TODO --> should z_offset just be set to depth in post_init?
-        # TODO --> should round-horizontal automatically offset Z + their radius?
-        """ How far to offset the slot below (-Z) work surface's top face.
+        """
+        How far to offset the slot below (-Z) work surface's top face.
 
-        --> Cylindrical (circ. faces parallel to work surface) offset by their depth.
-        --> Horizontal ( "" ""  perpendicular to work surface) offset by a manually specified
-            (negative) amount.
+        --> Cylindrical (circular faces parallel to work surface) offset by their depth.
+        --> Horizontal (circular faces perpendicular to work surface) default to half their scaled
+        radius, or can be manually offset by a specified (negative) amount in the JSON config.
         """
         if self.shape == Shape.HORIZONTAL:
             if self.z_offset == 0.0:
@@ -157,7 +156,11 @@ class Slot:
 
 @dataclass
 class Row:
-    """An ordered collection of slots."""
+    """Row
+
+    An ordered collection of slots. For even spacing (e.g. generate.rowed_holder(), a Row's Slots
+    are generated left-to-right along the X-axis.
+    """
 
     font_size: float = 6.0
     name: str = ''
@@ -225,9 +228,10 @@ class Row:
     def y_label(self) -> float:
         """ Y-position of slot labels.
 
-        --> Offset downward/below slots (-Y) by font_size.
+        --> Offset downward (-Y) by font_size to sit below their respective slot.
         --> Since slots are Y-centered with each other, labels start from the row's Y position to
-            stay aligned with each other."""
+            stay aligned with each other.
+        """
         return self.y - self.font_size
 
     def __iter__(self) -> Iterator[Slot]:
@@ -239,8 +243,28 @@ class Row:
 
 @dataclass
 class Holder:
-    """ A gridfinity holder, structured as a collection of rows, which are ordered collections of
-    slots."""
+    """Holder
+
+    A gridfinity box for holding tools, sockets, etc. A Holder is structured as a collection
+    of Rows, which themselves are ordered collections of Slots. By default these rows and their
+    slots will be spaced evenly along their respective axes.
+
+    For manual positional placement, specific x/y/z coordinates can also be assigned at the
+    slot level in the .json config. Rows are irrelevant for this configuration.
+
+    Dimensions are primarily intended to fit the gridfinity standard (https://gridfinity.xyz/)
+    using gridfinity units (GFU), but if a plain box is desired, dimensions can optionally be
+    specified in mm (use the --arrange option in generate.py to omit the gridfinity base.)
+
+    GFU grid (X/Y) specifications are 42mm per unit (not including tolerances.)
+    GFU height (Z) specification is 7mm per unit (not including tolerances.)
+
+    Args:
+        name (str, optional): holder name. Defaults to inputted JSON filename.
+        x (int): holder dimensions along the X-axis in GFU.
+        y (int): holder dimensions along the Y-axis in GFU.
+        z (float): holder height in GFU.
+    """
 
     # TODO --> auto allocate slots given # rows
     # TODO --> auto allocate slots/rows given GFU
@@ -265,6 +289,10 @@ class Holder:
         return self.add_row(Row(name=name, slots=DoublyLinkedList(slots)))
 
     def build_slots(self, labels: bool=True, top_face=None):
+        """
+        Iterate through all slots of all rows and build their specified shapes (and optional
+        labels.)
+        """
         for row in self.rows:
             for slot in row.slots:
                 # generate slot
@@ -290,8 +318,10 @@ class Holder:
                     extrude(label.sketch, amount=1.0)
 
     def build_test_surface(self, part) -> None:
-        """ Build mock holder surface without expensive gf generation call. Useful for faster
-            testing/fine-tuning row/slot arrangement."""
+        """
+        Build mock holder surface without expensive gf generation call. Useful for faster
+        testing/fine-tuning row/slot arrangement.
+        """
         Box(
             self.x_mm,
             self.y_mm,
@@ -321,7 +351,7 @@ class Holder:
     def x_align_slots(self) -> None:
         """X-align each slot, leaving even spacing (per row) between slots + left/right edges.
 
-        --> First slot initially aligns with min X / left edge (0-(x_mm*.5), since 0 is center.)
+        --> First slot initially aligns with left edge (min X, or (0-(x_mm*.5), since 0 is center.)
         --> Other slots initially align with the rightward edge of the previous slot.
 
         --> All slots then offset rightward (+X) by their row's x_slot_spacing
@@ -341,7 +371,7 @@ class Holder:
     def y_align_rows(self) -> None:
         """Y-align each row, leaving even spacing between rows + top/bottom edges.
 
-        --> First row initially aligns with max Y / top edge  (y_mm*.5, since 0 is center.)
+        --> First row initially aligns with top edge (max Y value, or y_mm*.5, since 0 is center.)
         --> Other rows initially align with the previous row.
 
         --> All rows then offset downward (-Y) by self.y_row_spacing
