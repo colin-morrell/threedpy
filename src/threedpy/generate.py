@@ -25,6 +25,7 @@ from gridfinity_build123d.constants import gridfinity_standard
 from threedpy.constants import FONT_PATH, GFU_GRID, GFU_HEIGHT
 from threedpy.storage import (
     StorageBlock,
+    StorageBlockType,
     Row,
     Shape,
     Slot,
@@ -111,7 +112,6 @@ def positional_storage_block(block: StorageBlock, arrange: bool=False):
 def rowed_storage_block(
         block: StorageBlock,
         arrange: bool = False,
-        font_size: float = 6.0,
         labels: bool = True,
         y_row_offset: float = 0.0
     ):
@@ -127,6 +127,8 @@ def rowed_storage_block(
 
     if (block.x_gfu == 0 or block.y_gfu == 0 or block.z_gfu == 0):
         raise ValueError('[!] x/y/z must be > 0')
+
+    block.log_storage_block_creation()
 
     with BuildPart() as part:
 
@@ -149,6 +151,16 @@ def rowed_storage_block(
         block.build_slots(labels=labels, top_face=top_face)
 
     return part
+
+
+def generate_storage_block(block: StorageBlock, arrange: bool = False, labels: bool = True):
+    """ Generate a storage block using the layout given by its type.
+
+    --> labels: only applies to rowed storage blocks (positional doesn't support labels yet.)
+    """
+    if block.type == StorageBlockType.POSITIONAL:
+        return positional_storage_block(block, arrange=arrange)
+    return rowed_storage_block(block, arrange=arrange, labels=labels)
 
 
 def scale_test(
@@ -203,9 +215,16 @@ def scale_test(
 
 
 def storage_block_from_args(args: argparse.Namespace) -> StorageBlock:
-    """Build a StorageBlock from the input JSON, with any name/x/y/z given on the command line
-    overriding the JSON's 'storage_block' settings."""
-    block = load_storage_block_from_path(args.in_path, name=args.name, x=args.x, y=args.y, z=args.z)
+    """Build a StorageBlock from the input JSON, with any name/type/x/y/z given on the command
+    line overriding the JSON's 'storage_block' settings."""
+    block = load_storage_block_from_path(
+        args.in_path,
+        name=args.name,
+        block_type=args.type,
+        x=args.x,
+        y=args.y,
+        z=args.z
+    )
     missing = [axis for axis in ('x', 'y', 'z') if not getattr(block, axis)]
     if missing:
         sys.exit('[!] {}: no {} dimension(s) in the JSON "storage_block" object or on the command line'
@@ -217,44 +236,46 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Generate gridfinity storage blocks and fitment tests.')
     subparsers = parser.add_subparsers(dest='command', required=True)
 
-    # arguments shared by both storage block types
-    block_args = argparse.ArgumentParser(add_help=False)
-    block_args.add_argument(
+    build = subparsers.add_parser(
+        'build',
+        help='storage block laid out by its JSON config (rowed or positional)'
+    )
+    build.add_argument(
         '-i', '--in',
         dest='in_path',
         metavar='PATH',
         required=True,
         help='path to slot/row JSON file'
     )
-    block_args.add_argument('-x', type=int, help='width in gridfinity units (overrides JSON)')
-    block_args.add_argument('-y', type=int, help='depth in gridfinity units (overrides JSON)')
-    block_args.add_argument('-z', type=float, help='height in gridfinity units (overrides JSON)')
-    block_args.add_argument(
+    build.add_argument(
+        '-t', '--type',
+        choices=[block_type.value for block_type in StorageBlockType],
+        help='slot layout (overrides JSON; default: rowed)'
+    )
+    build.add_argument('-x', type=int, help='width in gridfinity units (overrides JSON)')
+    build.add_argument('-y', type=int, help='depth in gridfinity units (overrides JSON)')
+    build.add_argument('-z', type=float, help='height in gridfinity units (overrides JSON)')
+    build.add_argument(
         '-o', '--out',
         dest='out_path',
         metavar='PATH',
         help='STL export path (not exported if omitted)'
     )
-    block_args.add_argument('-n', '--name', help='storage block name (overrides JSON; default: input filename)')
-    block_args.add_argument(
+    build.add_argument(
+        '-n', '--name',
+        help='storage block name (overrides JSON; default: input filename)'
+    )
+    build.add_argument(
         '--arrange',
         action='store_true',
         help='use a plain box instead of the (slow) gridfinity base, for arranging slots'
     )
-    block_args.add_argument('--no-show', action='store_true', help='skip the yacv preview')
-
-    subparsers.add_parser(
-        'positional',
-        parents=[block_args],
-        help='storage block with manually positioned slots'
+    build.add_argument('--no-show', action='store_true', help='skip the yacv preview')
+    build.add_argument(
+        '--no-labels',
+        action='store_true',
+        help='skip embossed slot labels (rowed only)'
     )
-
-    rowed = subparsers.add_parser(
-        'rowed',
-        parents=[block_args],
-        help='storage block with evenly spaced rows of slots'
-    )
-    rowed.add_argument('--no-labels', action='store_true', help='skip embossed slot labels')
 
     scale = subparsers.add_parser('scale-test', help='test fitments for a diameter at several scales')
     scale.add_argument('diameter', type=float, help='slot diameter (mm)')
@@ -287,11 +308,7 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     block = storage_block_from_args(args)
-    if args.command == 'positional':
-        part = positional_storage_block(block, arrange=args.arrange)
-    else:
-        block.log_storage_block_creation()
-        part = rowed_storage_block(block, arrange=args.arrange, labels=not args.no_labels)
+    part = generate_storage_block(block, arrange=args.arrange, labels=not args.no_labels)
 
     if not args.no_show:
         show(part)

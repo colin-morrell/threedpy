@@ -1,5 +1,5 @@
 {
-    "storage_block": {"name": "solder-station", "x": 5, "y": 5, "z": 3},
+    "storage_block": {"name": "solder-station", "type": "positional", "font_size": 6.0, "x": 5, "y": 5, "z": 3},
     "scale": 1.02,
     "rows": [
         { 

@@ -45,6 +45,18 @@ class Shape(Enum):
     ROUND = 'round'
 
 
+class StorageBlockType(Enum):
+    """
+    How a StorageBlock's slots are laid out.
+
+    --> POSITIONAL: each slot is placed at the x/y given for it in the JSON config.
+    --> ROWED: rows are evenly spaced along Y, and each row's slots evenly spaced along X.
+    """
+
+    POSITIONAL = 'positional'
+    ROWED = 'rowed'
+
+
 @dataclass
 class Slot:
     """Slot
@@ -95,6 +107,10 @@ class Slot:
             raise ValueError('[!] invalid slot shape: {}'.format(self.shape))
 
     def build_label(self) -> None:
+        """
+        Build an embossed label. By default, labels are placed below their slots with font size
+        6 and 1mm extrusion.
+        """
         Text(
             self.label,
             font_size=self.font_size,
@@ -245,9 +261,9 @@ class Row:
 class StorageBlock:
     """StorageBlock
 
-    A gridfinity box for holding tools, sockets, etc. A StorageBlock is structured as a collection
-    of Rows, which themselves are ordered collections of Slots. By default these rows and their
-    slots will be spaced evenly along their respective axes.
+    A gridfinity storage block for holding tools, sockets, etc. A StorageBlock is structured as a
+    collection of Rows, which themselves are ordered collections of Slots. By default these rows
+    and their slots will be spaced evenly along their respective axes.
 
     For manual positional placement, specific x/y/z coordinates can also be assigned at the
     slot level in the .json config. Rows are irrelevant for this configuration.
@@ -261,6 +277,8 @@ class StorageBlock:
 
     Args:
         name (str, optional): storage block name. Defaults to inputted JSON filename.
+        type (StorageBlockType): slot layout, rowed (default) or positional.
+        font_size (float): default label font size for every row/slot.
         x (int): storage block dimensions along the X-axis in GFU.
         y (int): storage block dimensions along the Y-axis in GFU.
         z (float): storage block height in GFU.
@@ -268,13 +286,18 @@ class StorageBlock:
 
     # TODO --> auto allocate slots given # rows
     # TODO --> auto allocate slots/rows given GFU
-    # TODO --> font_size
 
     name: str = ''
+    type: StorageBlockType = StorageBlockType.ROWED
+    font_size: float = 6.0
     rows: DoublyLinkedList[Row] = field(default_factory=DoublyLinkedList)
     x: int = 0
     y: int = 0
     z: float = 0.0
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.type, StorageBlockType):
+            self.type = StorageBlockType(self.type)
 
     def add_row(self, row: Row) -> Row:
         logger.debug('add_row(): {} slots'.format(len(row)))
@@ -332,6 +355,8 @@ class StorageBlock:
     def log_storage_block_creation(self) -> None:
         logging.debug('-'*25)
         logging.debug('[!] BUILDING STORAGE BLOCK [!]')
+        logging.debug('|           type: {}'.format(self.type.value))
+        logging.debug('|      font_size: {}'.format(self.font_size))
         logging.debug('|          x_gfu: {}'.format(self.x_gfu))
         logging.debug('|          y_gfu: {}'.format(self.y_gfu))
         logging.debug('|          z_gfu: {}'.format(self.z_gfu))
@@ -448,7 +473,7 @@ class StorageBlock:
         return len(self.rows)
 
 
-STORAGE_BLOCK_KEYS = ('name', 'x', 'y', 'z', 'x_mm', 'y_mm', 'z_mm')
+STORAGE_BLOCK_KEYS = ('name', 'type', 'font_size', 'x', 'y', 'z', 'x_mm', 'y_mm', 'z_mm')
 
 
 def _gfu_from_json(data: dict[str, Any], axis: str, unit_mm: float, whole: bool) -> float | None:
@@ -475,6 +500,7 @@ def _gfu_from_json(data: dict[str, Any], axis: str, unit_mm: float, whole: bool)
 def load_storage_block(
         data: dict[str, Any],
         name: str = '',
+        block_type: StorageBlockType | str | None = None,
         x: int | None = None,
         y: int | None = None,
         z: float | None = None
@@ -482,9 +508,11 @@ def load_storage_block(
     """ Build a StorageBlock (and its Rows) from a parsed JSON object.
 
     --> Storage block settings live under an optional top-level 'storage_block' object: 'name',
-        and each dimension as either GFU ('x', 'y', 'z') or mm ('x_mm', 'y_mm', 'z_mm').
+        'type' ('rowed' or 'positional', default rowed), 'font_size' (default label size for
+        every row/slot), and each dimension as either GFU ('x', 'y', 'z') or mm ('x_mm', 'y_mm',
+        'z_mm').
     --> X/Y given in mm are rounded up to whole units; Z may be fractional.
-    --> name/x/y/z arguments (e.g. from the CLI) override the JSON values.
+    --> name/block_type/x/y/z arguments (e.g. from the CLI) override the JSON values.
     --> Missing dimensions are left at 0."""
 
     block_data = data.get('storage_block', {})
@@ -503,11 +531,13 @@ def load_storage_block(
 
     block = StorageBlock(
         name=name or block_data.get('name', ''),
+        type=block_type or block_data.get('type', StorageBlockType.ROWED),
+        font_size=block_data.get('font_size', StorageBlock.font_size),
         x=int(dims['x'] or 0),
         y=int(dims['y'] or 0),
         z=float(dims['z'] or 0.0)
     )
-    for row in load_rows(data):
+    for row in load_rows(data, font_size=block.font_size):
         block.add_row(row)
     return block
 
@@ -515,6 +545,7 @@ def load_storage_block(
 def load_storage_block_from_path(
         path: str | os.PathLike[str],
         name: str = '',
+        block_type: StorageBlockType | str | None = None,
         x: int | None = None,
         y: int | None = None,
         z: float | None = None
@@ -523,13 +554,13 @@ def load_storage_block_from_path(
     JSON."""
     logger.info('loading storage block from {}'.format(path))
     with open(path) as f:
-        block = load_storage_block(json.load(f), name=name, x=x, y=y, z=z)
+        block = load_storage_block(json.load(f), name=name, block_type=block_type, x=x, y=y, z=z)
     if not block.name:
         block.name = os.path.splitext(os.path.basename(path))[0]
     return block
 
 
-def load_rows(data: dict[str, Any]) -> list[Row]:
+def load_rows(data: dict[str, Any], font_size: float = 6.0) -> list[Row]:
     """ Build Rows from parsed JSON object.
 
     --> Slots are grouped under 'rows', each with its own 'slots' list and an
@@ -537,15 +568,24 @@ def load_rows(data: dict[str, Any]) -> list[Row]:
     --> Top-level keys (e.g. shape, scale) are defaults for every slot, except 'storage_block'
         (see load_storage_block)
     --> Other row-level keys are defaults for that row's slots
-    --> Values set on an individual slot override both."""
+    --> Values set on an individual slot override both.
+    --> font_size is the default label size (e.g. the storage block's); each row reserves space
+        for its largest label."""
 
-    defaults = {key: value for key, value in data.items() if key not in ('storage_block', 'rows', 'slots')}
+    defaults = {'font_size': font_size}
+    defaults.update(
+        (key, value) for key, value in data.items() if key not in ('storage_block', 'rows', 'slots')
+    )
     rows_data = data['rows'] if 'rows' in data else [{'slots': data['slots']}]
     rows = []
     for row_data in rows_data:
         row_defaults = {key: value for key, value in row_data.items() if key not in ('name', 'slots')}
         slots = [Slot(**{**defaults, **row_defaults, **slot}) for slot in row_data['slots']]
-        rows.append(Row(name=row_data.get('name', ''), slots=DoublyLinkedList(slots)))
+        rows.append(Row(
+            font_size=max((slot.font_size for slot in slots), default=defaults['font_size']),
+            name=row_data.get('name', ''),
+            slots=DoublyLinkedList(slots)
+        ))
     return rows
 
 
