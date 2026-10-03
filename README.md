@@ -1,6 +1,6 @@
 # threedpy
 
-Generate gridfinity bins and socket/tool holders with [build123d](https://github.com/gumyr/build123d).
+Generate gridfinity bins and socket/tool storage blocks with [build123d](https://github.com/gumyr/build123d).
 
 ## Setup
 
@@ -41,7 +41,7 @@ poetry run ipython
 
 Send cells to the session from your editor (e.g. vim-ipython-cell / vim-slime, or VS Code's
 Interactive Window), or load them by hand with `%load` / `%run`. Turning on autoreload picks
-up edits to `holder.py` / `util.py` without restarting the session:
+up edits to `storage.py` / `util.py` without restarting the session:
 
 ```python
 %load_ext autoreload
@@ -56,25 +56,25 @@ viewer at <http://localhost:32323> (set `YACV_PORT` to change the port).
 ```sh
 poetry run threedpy --help
 
-# holder with evenly spaced rows of slots, sized from the JSON's "holder" object
-poetry run threedpy rowed -i src/threedpy/examples/husky-sockets-vert-mm.json -o holder.stl
+# storage block with evenly spaced rows of slots, sized from the JSON's "storage_block" object
+poetry run threedpy rowed -i src/threedpy/examples/husky-sockets-vert-mm.json -o block.stl
 
-# holder with manually positioned slots
-poetry run threedpy positional -i input.json -x 2 -y 3 -z 3 -o holder.stl
+# storage block with manually positioned slots
+poetry run threedpy positional -i input.json -x 2 -y 3 -z 3 -o block.stl
 
 # test fitments for a 12.95mm diameter, 7mm deep slot at several scales
 poetry run threedpy scale-test 12.95 7 -o tests/ -s 1.01 1.02 1.03
 ```
 
-`-x`/`-y`/`-z` (gridfinity units) and `-n` override the JSON's holder settings. `--arrange`
+`-x`/`-y`/`-z` (gridfinity units) and `-n` override the JSON's storage block settings. `--arrange`
 swaps the (slow) gridfinity base for a plain box while you arrange slots, and `--no-show` skips
 the yacv preview.
 
-### Holder JSON
+### Storage block JSON
 
 ```json
 {
-    "holder": {"name": "my-holder", "x": 2, "y": 3, "z": 3},
+    "storage_block": {"name": "my-block", "x": 2, "y": 3, "z": 3},
     "shape": "round",
     "rows": [
         {"slots": [{"label": "10", "diameter": 14.2, "depth": 14.0}]}
@@ -82,9 +82,10 @@ the yacv preview.
 }
 ```
 
-`holder` sets the name and size of the holder. Give each dimension in gridfinity units (`x`, `y`,
-`z`) or in mm (`x_mm`, `y_mm`, `z_mm`), not both. X/Y in mm round up to whole units (42mm each);
-Z in mm is converted to (possibly fractional) 7mm height units. The name defaults to the filename.
+`storage_block` sets the name and size of the storage block. Give each dimension in gridfinity
+units (`x`, `y`, `z`) or in mm (`x_mm`, `y_mm`, `z_mm`), not both. X/Y in mm round up to whole
+units (42mm each); Z in mm is converted to (possibly fractional) 7mm height units. The name
+defaults to the filename.
 
 Other top-level keys are defaults for every slot, row-level keys are defaults for that row's slots,
 and values on a slot override both. A top-level `slots` list can be used instead of `rows` for a

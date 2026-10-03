@@ -158,8 +158,8 @@ class Slot:
 class Row:
     """Row
 
-    An ordered collection of slots. For even spacing (e.g. generate.rowed_holder(), a Row's Slots
-    are generated left-to-right along the X-axis.
+    An ordered collection of slots. For even spacing (e.g. generate.rowed_storage_block()), a
+    Row's Slots are generated left-to-right along the X-axis.
     """
 
     font_size: float = 6.0
@@ -242,10 +242,10 @@ class Row:
 
 
 @dataclass
-class Holder:
-    """Holder
+class StorageBlock:
+    """StorageBlock
 
-    A gridfinity box for holding tools, sockets, etc. A Holder is structured as a collection
+    A gridfinity box for holding tools, sockets, etc. A StorageBlock is structured as a collection
     of Rows, which themselves are ordered collections of Slots. By default these rows and their
     slots will be spaced evenly along their respective axes.
 
@@ -260,10 +260,10 @@ class Holder:
     GFU height (Z) specification is 7mm per unit (not including tolerances.)
 
     Args:
-        name (str, optional): holder name. Defaults to inputted JSON filename.
-        x (int): holder dimensions along the X-axis in GFU.
-        y (int): holder dimensions along the Y-axis in GFU.
-        z (float): holder height in GFU.
+        name (str, optional): storage block name. Defaults to inputted JSON filename.
+        x (int): storage block dimensions along the X-axis in GFU.
+        y (int): storage block dimensions along the Y-axis in GFU.
+        z (float): storage block height in GFU.
     """
 
     # TODO --> auto allocate slots given # rows
@@ -319,7 +319,7 @@ class Holder:
 
     def build_test_surface(self, part) -> None:
         """
-        Build mock holder surface without expensive gf generation call. Useful for faster
+        Build mock storage block surface without expensive gf generation call. Useful for faster
         testing/fine-tuning row/slot arrangement.
         """
         Box(
@@ -329,9 +329,9 @@ class Holder:
             align=(Align.CENTER, Align.CENTER)
         )
 
-    def log_holder_creation(self) -> None:
+    def log_storage_block_creation(self) -> None:
         logging.debug('-'*25)
-        logging.debug('[!] BUILDING HOLDER [!]')
+        logging.debug('[!] BUILDING STORAGE BLOCK [!]')
         logging.debug('|          x_gfu: {}'.format(self.x_gfu))
         logging.debug('|          y_gfu: {}'.format(self.y_gfu))
         logging.debug('|          z_gfu: {}'.format(self.z_gfu))
@@ -448,11 +448,11 @@ class Holder:
         return len(self.rows)
 
 
-HOLDER_KEYS = ('name', 'x', 'y', 'z', 'x_mm', 'y_mm', 'z_mm')
+STORAGE_BLOCK_KEYS = ('name', 'x', 'y', 'z', 'x_mm', 'y_mm', 'z_mm')
 
 
 def _gfu_from_json(data: dict[str, Any], axis: str, unit_mm: float, whole: bool) -> float | None:
-    """ Read one holder dimension in GFU, given as either '<axis>' (GFU) or '<axis>_mm'.
+    """ Read one storage block dimension in GFU, given as either '<axis>' (GFU) or '<axis>_mm'.
 
     --> mm values are converted using the nominal unit size, and rounded up to whole units if
         whole is set (gridfinity X/Y must be whole units).
@@ -460,72 +460,73 @@ def _gfu_from_json(data: dict[str, Any], axis: str, unit_mm: float, whole: bool)
 
     gfu, mm = data.get(axis), data.get(axis + '_mm')
     if gfu is not None and mm is not None:
-        raise ValueError('[!] holder: give {0} or {0}_mm, not both'.format(axis))
+        raise ValueError('[!] storage_block: give {0} or {0}_mm, not both'.format(axis))
     if mm is not None:
         gfu = mm / unit_mm
         if whole:
             # round() first so float error (e.g. 84 / 42 = 2.0000000001) doesn't add a unit
             gfu = math.ceil(round(gfu, 6))
-        logger.info('holder: {}_mm={} -> {}={}'.format(axis, mm, axis, gfu))
+        logger.info('storage_block: {}_mm={} -> {}={}'.format(axis, mm, axis, gfu))
     if gfu is not None and whole and not float(gfu).is_integer():
-        raise ValueError('[!] holder: {} must be a whole number of units, got {}'.format(axis, gfu))
+        raise ValueError('[!] storage_block: {} must be a whole number of units, got {}'.format(axis, gfu))
     return gfu
 
 
-def load_holder(
+def load_storage_block(
         data: dict[str, Any],
         name: str = '',
         x: int | None = None,
         y: int | None = None,
         z: float | None = None
-    ) -> Holder:
-    """ Build a Holder (and its Rows) from a parsed JSON object.
+    ) -> StorageBlock:
+    """ Build a StorageBlock (and its Rows) from a parsed JSON object.
 
-    --> Holder settings live under an optional top-level 'holder' object: 'name', and each
-        dimension as either GFU ('x', 'y', 'z') or mm ('x_mm', 'y_mm', 'z_mm').
+    --> Storage block settings live under an optional top-level 'storage_block' object: 'name',
+        and each dimension as either GFU ('x', 'y', 'z') or mm ('x_mm', 'y_mm', 'z_mm').
     --> X/Y given in mm are rounded up to whole units; Z may be fractional.
     --> name/x/y/z arguments (e.g. from the CLI) override the JSON values.
     --> Missing dimensions are left at 0."""
 
-    holder_data = data.get('holder', {})
-    unknown = set(holder_data) - set(HOLDER_KEYS)
+    block_data = data.get('storage_block', {})
+    unknown = set(block_data) - set(STORAGE_BLOCK_KEYS)
     if unknown:
-        raise ValueError('[!] holder: unknown key(s): {}'.format(', '.join(sorted(unknown))))
+        raise ValueError('[!] storage_block: unknown key(s): {}'.format(', '.join(sorted(unknown))))
 
     dims = {
-        'x': _gfu_from_json(holder_data, 'x', GFU_GRID_NOMINAL, whole=True),
-        'y': _gfu_from_json(holder_data, 'y', GFU_GRID_NOMINAL, whole=True),
-        'z': _gfu_from_json(holder_data, 'z', GFU_HEIGHT, whole=False),
+        'x': _gfu_from_json(block_data, 'x', GFU_GRID_NOMINAL, whole=True),
+        'y': _gfu_from_json(block_data, 'y', GFU_GRID_NOMINAL, whole=True),
+        'z': _gfu_from_json(block_data, 'z', GFU_HEIGHT, whole=False),
     }
     for axis, override in (('x', x), ('y', y), ('z', z)):
         if override is not None:
             dims[axis] = override
 
-    holder = Holder(
-        name=name or holder_data.get('name', ''),
+    block = StorageBlock(
+        name=name or block_data.get('name', ''),
         x=int(dims['x'] or 0),
         y=int(dims['y'] or 0),
         z=float(dims['z'] or 0.0)
     )
     for row in load_rows(data):
-        holder.add_row(row)
-    return holder
+        block.add_row(row)
+    return block
 
 
-def load_holder_from_path(
+def load_storage_block_from_path(
         path: str | os.PathLike[str],
         name: str = '',
         x: int | None = None,
         y: int | None = None,
         z: float | None = None
-    ) -> Holder:
-    """Build a Holder from a JSON file. The name defaults to the filename if not set in the JSON."""
-    logger.info('loading holder from {}'.format(path))
+    ) -> StorageBlock:
+    """Build a StorageBlock from a JSON file. The name defaults to the filename if not set in the
+    JSON."""
+    logger.info('loading storage block from {}'.format(path))
     with open(path) as f:
-        holder = load_holder(json.load(f), name=name, x=x, y=y, z=z)
-    if not holder.name:
-        holder.name = os.path.splitext(os.path.basename(path))[0]
-    return holder
+        block = load_storage_block(json.load(f), name=name, x=x, y=y, z=z)
+    if not block.name:
+        block.name = os.path.splitext(os.path.basename(path))[0]
+    return block
 
 
 def load_rows(data: dict[str, Any]) -> list[Row]:
@@ -533,12 +534,12 @@ def load_rows(data: dict[str, Any]) -> list[Row]:
 
     --> Slots are grouped under 'rows', each with its own 'slots' list and an
         optional 'name'; a top-level 'slots' list is loaded as a single row.
-    --> Top-level keys (e.g. shape, scale) are defaults for every slot, except 'holder'
-        (see load_holder)
+    --> Top-level keys (e.g. shape, scale) are defaults for every slot, except 'storage_block'
+        (see load_storage_block)
     --> Other row-level keys are defaults for that row's slots
     --> Values set on an individual slot override both."""
 
-    defaults = {key: value for key, value in data.items() if key not in ('holder', 'rows', 'slots')}
+    defaults = {key: value for key, value in data.items() if key not in ('storage_block', 'rows', 'slots')}
     rows_data = data['rows'] if 'rows' in data else [{'slots': data['slots']}]
     rows = []
     for row_data in rows_data:
@@ -569,10 +570,10 @@ def load_slots_from_path(path: str | os.PathLike[str]) -> list[Slot]:
 
 def main() -> None:
     logger.info('Starting')
-    holder = Holder(name='holder-1')
-    row = holder.add_row(Row(name='row-1'))
+    block = StorageBlock(name='block-1')
+    row = block.add_row(Row(name='row-1'))
     row.add_slot(Slot(label='M3', shape=Shape.HEXAGONAL, diameter=12.0, depth=20.0))
-    logger.info('Built {} with {} row(s)'.format(holder.name, len(holder)))
+    logger.info('Built {} with {} row(s)'.format(block.name, len(block)))
 
 
 if __name__ == '__main__':

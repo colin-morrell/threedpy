@@ -1,5 +1,5 @@
 {
-    "holder": {"name": "etorx", "x": 2, "y": 1, "z": 3},
+    "storage_block": {"name": "etorx", "x": 2, "y": 1, "z": 3},
     "shape": "round",
     "scale": 1.02,
     "slots": [

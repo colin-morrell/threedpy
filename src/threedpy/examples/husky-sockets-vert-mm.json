@@ -1,5 +1,5 @@
 {
-    "holder": {"name": "husky-sockets-vert-mm", "x": 2, "y": 3, "z": 3},
+    "storage_block": {"name": "husky-sockets-vert-mm", "x": 2, "y": 3, "z": 3},
     "shape": "round",
     "rows": [
         {

@@ -23,12 +23,12 @@ from gridfinity_build123d import (
 )
 from gridfinity_build123d.constants import gridfinity_standard
 from threedpy.constants import FONT_PATH, GFU_GRID, GFU_HEIGHT
-from threedpy.holder import (
-    Holder,
+from threedpy.storage import (
+    StorageBlock,
     Row,
     Shape,
     Slot,
-    load_holder_from_path,
+    load_storage_block_from_path,
     load_rows_from_path,
     load_slots_from_path
 )
@@ -76,7 +76,7 @@ def labeled_bin(x: int, y: int, z: int, txt: str):
         return gf_bin
 
 
-def positional_holder(holder: Holder, arrange: bool=False):
+def positional_storage_block(block: StorageBlock, arrange: bool=False):
     """ Generate a gridfinity box with manually-specified positions for each slot.
 
     --> Does not currently support labels.
@@ -85,21 +85,21 @@ def positional_holder(holder: Holder, arrange: bool=False):
 
     # TODO --> bounds checks
 
-    holder.log_holder_creation()
+    block.log_storage_block_creation()
 
     with BuildPart() as part:
         # establish our work surface
         if not arrange:
-            gf_box = build_gf_box(holder.x_gfu, holder.y_gfu, holder.z_gfu)
+            gf_box = build_gf_box(block.x_gfu, block.y_gfu, block.z_gfu)
         else:
             with Locations((0,0,0)):
-                holder.build_test_surface(rowed_holder)
+                block.build_test_surface(rowed_storage_block)
 
-        for slot in holder.slots():
+        for slot in block.slots():
             coords = (
                 slot.x,
                 slot.y,
-                holder.z_mm - slot.z
+                block.z_mm - slot.z
             )
             with Locations(coords):
                 slot.log_slot_creation(coords)
@@ -108,14 +108,14 @@ def positional_holder(holder: Holder, arrange: bool=False):
     return part
 
 
-def rowed_holder(
-        holder: Holder,
+def rowed_storage_block(
+        block: StorageBlock,
         arrange: bool = False,
         font_size: float = 6.0,
         labels: bool = True,
         y_row_offset: float = 0.0
     ):
-    """ Generate a gridfinity socket (etc) holder box with equally spaced rows of slots and
+    """ Generate a gridfinity socket (etc) storage block with equally spaced rows of slots and
         optional corresponding labels.
 
     --> arrange: for fine-tuning arrangement of the slots. skips time-expensive call to build
@@ -125,28 +125,28 @@ def rowed_holder(
 
     # TODO --> support horizontal
 
-    if (holder.x_gfu == 0 or holder.y_gfu == 0 or holder.z_gfu == 0):
+    if (block.x_gfu == 0 or block.y_gfu == 0 or block.z_gfu == 0):
         raise ValueError('[!] x/y/z must be > 0')
 
     with BuildPart() as part:
 
         # establish work surface
         if not arrange:
-            gf_box = build_gf_box(holder.x_gfu, holder.y_gfu, holder.z_gfu)
+            gf_box = build_gf_box(block.x_gfu, block.y_gfu, block.z_gfu)
         else:
             with Locations((0,0,0)):
-                holder.build_test_surface(rowed_holder)
+                block.build_test_surface(rowed_storage_block)
 
         # determine each rows' Y-position
-        holder.y_align_rows()
+        block.y_align_rows()
 
         # determine each slots' X-position (per row)
-        holder.x_align_slots()
+        block.x_align_slots()
 
         # face of working surface on which label text will (optionally) be drawn + extruded
         top_face = part.faces().sort_by(Axis.Z)[-1]
 
-        holder.build_slots(labels=labels, top_face=top_face)
+        block.build_slots(labels=labels, top_face=top_face)
 
     return part
 
@@ -202,57 +202,57 @@ def scale_test(
     return None
 
 
-def holder_from_args(args: argparse.Namespace) -> Holder:
-    """Build a Holder from the input JSON, with any name/x/y/z given on the command line
-    overriding the JSON's 'holder' settings."""
-    holder = load_holder_from_path(args.in_path, name=args.name, x=args.x, y=args.y, z=args.z)
-    missing = [axis for axis in ('x', 'y', 'z') if not getattr(holder, axis)]
+def storage_block_from_args(args: argparse.Namespace) -> StorageBlock:
+    """Build a StorageBlock from the input JSON, with any name/x/y/z given on the command line
+    overriding the JSON's 'storage_block' settings."""
+    block = load_storage_block_from_path(args.in_path, name=args.name, x=args.x, y=args.y, z=args.z)
+    missing = [axis for axis in ('x', 'y', 'z') if not getattr(block, axis)]
     if missing:
-        sys.exit('[!] {}: no {} dimension(s) in the JSON "holder" object or on the command line'
+        sys.exit('[!] {}: no {} dimension(s) in the JSON "storage_block" object or on the command line'
                  .format(args.in_path, '/'.join(missing)))
-    return holder
+    return block
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description='Generate gridfinity holders and fitment tests.')
+    parser = argparse.ArgumentParser(description='Generate gridfinity storage blocks and fitment tests.')
     subparsers = parser.add_subparsers(dest='command', required=True)
 
-    # arguments shared by both holder types
-    holder_args = argparse.ArgumentParser(add_help=False)
-    holder_args.add_argument(
+    # arguments shared by both storage block types
+    block_args = argparse.ArgumentParser(add_help=False)
+    block_args.add_argument(
         '-i', '--in',
         dest='in_path',
         metavar='PATH',
         required=True,
         help='path to slot/row JSON file'
     )
-    holder_args.add_argument('-x', type=int, help='width in gridfinity units (overrides JSON)')
-    holder_args.add_argument('-y', type=int, help='depth in gridfinity units (overrides JSON)')
-    holder_args.add_argument('-z', type=float, help='height in gridfinity units (overrides JSON)')
-    holder_args.add_argument(
+    block_args.add_argument('-x', type=int, help='width in gridfinity units (overrides JSON)')
+    block_args.add_argument('-y', type=int, help='depth in gridfinity units (overrides JSON)')
+    block_args.add_argument('-z', type=float, help='height in gridfinity units (overrides JSON)')
+    block_args.add_argument(
         '-o', '--out',
         dest='out_path',
         metavar='PATH',
         help='STL export path (not exported if omitted)'
     )
-    holder_args.add_argument('-n', '--name', help='holder name (overrides JSON; default: input filename)')
-    holder_args.add_argument(
+    block_args.add_argument('-n', '--name', help='storage block name (overrides JSON; default: input filename)')
+    block_args.add_argument(
         '--arrange',
         action='store_true',
         help='use a plain box instead of the (slow) gridfinity base, for arranging slots'
     )
-    holder_args.add_argument('--no-show', action='store_true', help='skip the yacv preview')
+    block_args.add_argument('--no-show', action='store_true', help='skip the yacv preview')
 
     subparsers.add_parser(
         'positional',
-        parents=[holder_args],
-        help='holder with manually positioned slots'
+        parents=[block_args],
+        help='storage block with manually positioned slots'
     )
 
     rowed = subparsers.add_parser(
         'rowed',
-        parents=[holder_args],
-        help='holder with evenly spaced rows of slots'
+        parents=[block_args],
+        help='storage block with evenly spaced rows of slots'
     )
     rowed.add_argument('--no-labels', action='store_true', help='skip embossed slot labels')
 
@@ -286,12 +286,12 @@ def main(argv: list[str] | None = None) -> None:
         scale_test(args.diameter, args.depth, args.out_path, args.scales, preview=not args.no_show)
         return
 
-    holder = holder_from_args(args)
+    block = storage_block_from_args(args)
     if args.command == 'positional':
-        part = positional_holder(holder, arrange=args.arrange)
+        part = positional_storage_block(block, arrange=args.arrange)
     else:
-        holder.log_holder_creation()
-        part = rowed_holder(holder, arrange=args.arrange, labels=not args.no_labels)
+        block.log_storage_block_creation()
+        part = rowed_storage_block(block, arrange=args.arrange, labels=not args.no_labels)
 
     if not args.no_show:
         show(part)
