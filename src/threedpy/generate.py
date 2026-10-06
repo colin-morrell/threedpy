@@ -89,7 +89,7 @@ def positional_storage_block(block: StorageBlock, arrange: bool=False):
     block.log_storage_block_creation()
 
     with BuildPart() as part:
-        # establish our work surface
+        # establish work surface
         if not arrange:
             gf_box = build_gf_box(block.x_gfu, block.y_gfu, block.z_gfu)
         else:
@@ -215,8 +215,8 @@ def scale_test(
 
 
 def storage_block_from_args(args: argparse.Namespace) -> StorageBlock:
-    """Build a StorageBlock from the input JSON, with any name/type/x/y/z given on the command
-    line overriding the JSON's 'storage_block' settings."""
+    """Build a StorageBlock from the input YAML, with any name/type/x/y/z given on the command
+    line overriding the YAML's 'storage_block' settings."""
     block = load_storage_block_from_path(
         args.in_path,
         name=args.name,
@@ -227,7 +227,7 @@ def storage_block_from_args(args: argparse.Namespace) -> StorageBlock:
     )
     missing = [axis for axis in ('x', 'y', 'z') if not getattr(block, axis)]
     if missing:
-        sys.exit('[!] {}: no {} dimension(s) in the JSON "storage_block" object or on the command line'
+        sys.exit('[!] {}: no {} dimension(s) in the YAML "storage_block" mapping or on the command line'
                  .format(args.in_path, '/'.join(missing)))
     return block
 
@@ -238,17 +238,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     build = subparsers.add_parser(
         'build',
-        help='storage block laid out by its JSON config (rowed or positional)'
+        help='storage block laid out by its YAML config (rowed or positional)'
     )
-    build.add_argument('in_path', metavar='PATH', help='path to slot/row JSON file')
+    build.add_argument('in_path', metavar='PATH', help='path to slot/row YAML file')
     build.add_argument(
         '-t', '--type',
         choices=[block_type.value for block_type in StorageBlockType],
-        help='slot layout (overrides JSON; default: rowed)'
+        help='slot layout (overrides YAML; default: rowed)'
     )
-    build.add_argument('-x', type=int, help='width in gridfinity units (overrides JSON)')
-    build.add_argument('-y', type=int, help='depth in gridfinity units (overrides JSON)')
-    build.add_argument('-z', type=float, help='height in gridfinity units (overrides JSON)')
+    build.add_argument('-x', type=int, help='width in gridfinity units (overrides YAML)')
+    build.add_argument('-y', type=int, help='depth in gridfinity units (overrides YAML)')
+    build.add_argument('-z', type=float, help='height in gridfinity units (overrides YAML)')
     build.add_argument(
         '-o', '--out',
         dest='out_path',
@@ -257,7 +257,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     build.add_argument(
         '-n', '--name',
-        help='storage block name (overrides JSON; default: input filename)'
+        help='storage block name (overrides YAML; default: input filename)'
     )
     build.add_argument(
         '--arrange',

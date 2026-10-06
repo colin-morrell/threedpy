@@ -1,4 +1,3 @@
-import json
 import logging
 import math
 import os
@@ -7,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+import yaml
 from build123d import (
     Align,
     Box,
@@ -21,10 +21,11 @@ from build123d import (
 from threedpy.constants import FONT_PATH, GFU_GRID, GFU_GRID_NOMINAL, GFU_HEIGHT
 from threedpy.util import DoublyLinkedList
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
+# repo root, two levels up from src/threedpy/
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'config.yaml')
 
 with open(CONFIG_PATH) as f:
-    CONFIG = json.load(f)
+    CONFIG = yaml.safe_load(f)
 
 logger = logging.getLogger(__name__)
 
@@ -33,23 +34,21 @@ class Shape(Enum):
     """
     Slot cross-section.
 
-    --> HORIZONTAL: cylinder whose circular faces are perpendicular to the work surface.
-        (e.g. a long socket laid on its side.)
-    --> ROUND: cylinder whose circular faces are parallel to the work surface.
-        (e.g. a short socket standing upright.)
+    --> ROUND_HORZ: cylinder w/ circular faces perpendicular to Z-axis (long socket on its side)
+    --> ROUND_VERT: cylinder w/ circular faces parallel to Z-axis (short socket standing upright)
     """
 
-    HEXAGONAL = 'hexagonal'
-    HORIZONTAL = 'horizontal'
-    RECTANGLE = 'rectangle'
-    ROUND = 'round'
+    PRISM_HEXA = 'prism_hexa'
+    PRISM_RECT = 'prism_rect'
+    ROUND_HORZ = 'round_horz'
+    ROUND_VERT = 'round_vert'
 
 
 class StorageBlockType(Enum):
     """
     How a StorageBlock's slots are laid out.
 
-    --> POSITIONAL: each slot is placed at the x/y given for it in the JSON config.
+    --> POSITIONAL: each slot is placed at the x/y given for it in the YAML config.
     --> ROWED: rows are evenly spaced along Y, and each row's slots evenly spaced along X.
     """
 
@@ -70,7 +69,7 @@ class Slot:
     # TODO --> center option for x/y. calc box_len / slot_len and offset for spacing
 
     label: str = ''
-    shape: Shape = Shape.ROUND
+    shape: Shape = Shape.ROUND_VERT
     diameter: float = 0.0
     depth: float = 0.0
     font_size: float = 6.0
@@ -87,7 +86,7 @@ class Slot:
 
     def build_shape(self) -> None:
         """Build the slot's shape using build123d."""
-        if self.shape in (Shape.ROUND, Shape.HORIZONTAL):
+        if self.shape in (Shape.ROUND_VERT, Shape.ROUND_HORZ):
             Cylinder(
                 self.scaled_radius,
                 self.depth,
@@ -95,7 +94,7 @@ class Slot:
                 align=(Align.CENTER, Align.MIN),
                 mode=Mode.SUBTRACT
             )
-        elif self.shape == Shape.RECTANGLE:
+        elif self.shape == Shape.PRISM_RECT:
             Box(
                 self.width,
                 self.length,
@@ -138,7 +137,7 @@ class Slot:
 
     @property
     def rotation(self) -> int:
-        if self.shape == Shape.HORIZONTAL:
+        if self.shape == Shape.ROUND_HORZ:
             return 90
         return 0
 
@@ -161,9 +160,9 @@ class Slot:
 
         --> Cylindrical (circular faces parallel to work surface) offset by their depth.
         --> Horizontal (circular faces perpendicular to work surface) default to half their scaled
-        radius, or can be manually offset by a specified (negative) amount in the JSON config.
+        radius, or can be manually offset by a specified (negative) amount in the YAML config.
         """
-        if self.shape == Shape.HORIZONTAL:
+        if self.shape == Shape.ROUND_HORZ:
             if self.z_offset == 0.0:
                 return -self.scaled_radius
             return self.z_offset
@@ -266,7 +265,7 @@ class StorageBlock:
     and their slots will be spaced evenly along their respective axes.
 
     For manual positional placement, specific x/y/z coordinates can also be assigned at the
-    slot level in the .json config. Rows are irrelevant for this configuration.
+    slot level in the .yaml config. Rows are irrelevant for this configuration.
 
     Dimensions are primarily intended to fit the gridfinity standard (https://gridfinity.xyz/)
     using gridfinity units (GFU), but if a plain box is desired, dimensions can optionally be
@@ -276,7 +275,7 @@ class StorageBlock:
     GFU height (Z) specification is 7mm per unit (not including tolerances.)
 
     Args:
-        name (str, optional): storage block name. Defaults to inputted JSON filename.
+        name (str, optional): storage block name. Defaults to inputted YAML filename.
         type (StorageBlockType): slot layout, rowed (default) or positional.
         font_size (float): default label font size for every row/slot.
         x (int): storage block dimensions along the X-axis in GFU.
@@ -473,10 +472,10 @@ class StorageBlock:
         return len(self.rows)
 
 
-STORAGE_BLOCK_KEYS = ('name', 'type', 'font_size', 'x', 'y', 'z', 'x_mm', 'y_mm', 'z_mm')
+STORAGE_BLOCK_KEYS = ('name', 'type', 'font_size', 'x', 'y', 'z', 'x_mm', 'y_mm', 'z_mm', 'global')
 
 
-def _gfu_from_json(data: dict[str, Any], axis: str, unit_mm: float, whole: bool) -> float | None:
+def _gfu_from_config(data: dict[str, Any], axis: str, unit_mm: float, whole: bool) -> float | None:
     """ Read one storage block dimension in GFU, given as either '<axis>' (GFU) or '<axis>_mm'.
 
     --> mm values are converted using the nominal unit size, and rounded up to whole units if
@@ -505,14 +504,14 @@ def load_storage_block(
         y: int | None = None,
         z: float | None = None
     ) -> StorageBlock:
-    """ Build a StorageBlock (and its Rows) from a parsed JSON object.
+    """ Build a StorageBlock (and its Rows) from a parsed YAML config.
 
     --> Storage block settings live under an optional top-level 'storage_block' object: 'name',
         'type' ('rowed' or 'positional', default rowed), 'font_size' (default label size for
-        every row/slot), and each dimension as either GFU ('x', 'y', 'z') or mm ('x_mm', 'y_mm',
-        'z_mm').
+        every row/slot), each dimension as either GFU ('x', 'y', 'z') or mm ('x_mm', 'y_mm',
+        'z_mm'), and 'global' (defaults for every slot, see load_rows).
     --> X/Y given in mm are rounded up to whole units; Z may be fractional.
-    --> name/block_type/x/y/z arguments (e.g. from the CLI) override the JSON values.
+    --> name/block_type/x/y/z arguments (e.g. from the CLI) override the YAML values.
     --> Missing dimensions are left at 0."""
 
     block_data = data.get('storage_block', {})
@@ -521,9 +520,9 @@ def load_storage_block(
         raise ValueError('[!] storage_block: unknown key(s): {}'.format(', '.join(sorted(unknown))))
 
     dims = {
-        'x': _gfu_from_json(block_data, 'x', GFU_GRID_NOMINAL, whole=True),
-        'y': _gfu_from_json(block_data, 'y', GFU_GRID_NOMINAL, whole=True),
-        'z': _gfu_from_json(block_data, 'z', GFU_HEIGHT, whole=False),
+        'x': _gfu_from_config(block_data, 'x', GFU_GRID_NOMINAL, whole=True),
+        'y': _gfu_from_config(block_data, 'y', GFU_GRID_NOMINAL, whole=True),
+        'z': _gfu_from_config(block_data, 'z', GFU_HEIGHT, whole=False),
     }
     for axis, override in (('x', x), ('y', y), ('z', z)):
         if override is not None:
@@ -550,32 +549,32 @@ def load_storage_block_from_path(
         y: int | None = None,
         z: float | None = None
     ) -> StorageBlock:
-    """Build a StorageBlock from a JSON file. The name defaults to the filename if not set in the
-    JSON."""
+    """Build a StorageBlock from a YAML file. The name defaults to the filename if not set in the
+    YAML."""
     logger.info('loading storage block from {}'.format(path))
     with open(path) as f:
-        block = load_storage_block(json.load(f), name=name, block_type=block_type, x=x, y=y, z=z)
+        block = load_storage_block(yaml.safe_load(f), name=name, block_type=block_type, x=x, y=y, z=z)
     if not block.name:
         block.name = os.path.splitext(os.path.basename(path))[0]
     return block
 
 
 def load_rows(data: dict[str, Any], font_size: float = 6.0) -> list[Row]:
-    """ Build Rows from parsed JSON object.
+    """ Build Rows from a parsed YAML config.
 
     --> Slots are grouped under 'rows', each with its own 'slots' list and an
         optional 'name'; a top-level 'slots' list is loaded as a single row.
-    --> Top-level keys (e.g. shape, scale) are defaults for every slot, except 'storage_block'
-        (see load_storage_block)
+    --> 'storage_block' 'global' keys (e.g. shape, scale) are defaults for every slot
     --> Other row-level keys are defaults for that row's slots
     --> Values set on an individual slot override both.
     --> font_size is the default label size (e.g. the storage block's); each row reserves space
         for its largest label."""
 
-    defaults = {'font_size': font_size}
-    defaults.update(
-        (key, value) for key, value in data.items() if key not in ('storage_block', 'rows', 'slots')
-    )
+    unknown = set(data) - {'storage_block', 'rows', 'slots'}
+    if unknown:
+        raise ValueError('[!] unknown top-level key(s): {} (slot defaults go in storage_block.global)'
+                         .format(', '.join(sorted(unknown))))
+    defaults = {'font_size': font_size, **data.get('storage_block', {}).get('global', {})}
     rows_data = data['rows'] if 'rows' in data else [{'slots': data['slots']}]
     rows = []
     for row_data in rows_data:
@@ -590,29 +589,29 @@ def load_rows(data: dict[str, Any], font_size: float = 6.0) -> list[Row]:
 
 
 def load_rows_from_path(path: str | os.PathLike[str]) -> list[Row]:
-    """Build Rows from a JSON file."""
+    """Build Rows from a YAML file."""
     logger.info('loading rows from {}'.format(path))
     with open(path) as f:
-        return load_rows(json.load(f))
+        return load_rows(yaml.safe_load(f))
 
 
 def load_slots(data: dict[str, Any]) -> list[Slot]:
-    """Build Slots from a parsed JSON object, ignoring any row grouping."""
+    """Build Slots from a parsed YAML config, ignoring any row grouping."""
     return [slot for row in load_rows(data) for slot in row]
 
 
 def load_slots_from_path(path: str | os.PathLike[str]) -> list[Slot]:
-    """Build Slots from a JSON file, ignoring any row grouping."""
+    """Build Slots from a YAML file, ignoring any row grouping."""
     logger.info('loading slots from {}'.format(path))
     with open(path) as f:
-        return load_slots(json.load(f))
+        return load_slots(yaml.safe_load(f))
 
 
 def main() -> None:
     logger.info('Starting')
     block = StorageBlock(name='block-1')
     row = block.add_row(Row(name='row-1'))
-    row.add_slot(Slot(label='M3', shape=Shape.HEXAGONAL, diameter=12.0, depth=20.0))
+    row.add_slot(Slot(label='M3', shape=Shape.PRISM_HEXA, diameter=12.0, depth=20.0))
     logger.info('Built {} with {} row(s)'.format(block.name, len(block)))
 
 

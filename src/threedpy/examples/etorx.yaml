@@ -1,0 +1,16 @@
+storage_block:
+    name: 'etorx'
+    type: 'rowed'
+    font_size: 6.0
+    x: 2
+    y: 1
+    z: 3
+    global:
+        shape: 'round_vert'
+        scale: 1.02
+slots:
+    - {diameter: 11.7, depth: 10, label: 'E4'}
+    - {diameter: 11.7, depth: 10, label: 'E5'}
+    - {diameter: 13.1, depth: 10, label: 'E6'}
+    - {diameter: 13.1, depth: 10, label: 'E7'}
+    - {diameter: 13.1, depth: 10, label: 'E8'}
