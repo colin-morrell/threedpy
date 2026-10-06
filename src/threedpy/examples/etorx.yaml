@@ -1,10 +1,13 @@
 storage_block:
+    # can specify the name of the output .stl here, otherwise will match input filename
     name: 'etorx'
     type: 'rowed'
     font_size: 6.0
+    # gridfinity units
     x: 2
     y: 1
     z: 3
+    # applies to every row/slot unless overwritten in that row/slot
     global:
         shape: 'round_vert'
         scale: 1.02
