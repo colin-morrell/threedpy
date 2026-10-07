@@ -1,0 +1,29 @@
+# round_horz test: four rows (even count) of three slots, labeled
+# based on src/threedpy/examples/husky-sockets-horz-mm.yaml
+storage_block:
+    type: 'rowed'
+    font_size: 6.0
+    x: 2
+    y: 7
+    z: 3
+    global:
+        shape: 'round_horz'
+rows:
+    # for horizontal round slots, the measurements here are of the socket itself
+    # they will get translated accordingly when the object is rotated 90
+    - slots:
+        - {diameter: 11.75, depth: 50.35, scale: 1.03, label: '6'}
+        - {diameter: 13.15, depth: 50.65, scale: 1.03, label: '7'}
+        - {diameter: 13.15, depth: 51.05, scale: 1.03, label: '8'}
+    - slots:
+        - {diameter: 13.15, depth: 50.65, scale: 1.03, label: '7'}
+        - {diameter: 13.15, depth: 51.05, scale: 1.03, label: '8'}
+        - {diameter: 13.75, depth: 51.10, scale: 1.03, label: '9'}
+    - slots:
+        - {diameter: 11.75, depth: 50.35, scale: 1.03, label: '6'}
+        - {diameter: 13.15, depth: 51.05, scale: 1.03, label: '8'}
+        - {diameter: 13.75, depth: 51.10, scale: 1.03, label: '9'}
+    - slots:
+        - {diameter: 11.75, depth: 50.35, scale: 1.03, label: '6'}
+        - {diameter: 13.15, depth: 50.65, scale: 1.03, label: '7'}
+        - {diameter: 13.75, depth: 51.10, scale: 1.03, label: '9'}

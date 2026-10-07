@@ -1,0 +1,15 @@
+# round_vert test: one row of three slots, no labels
+# based on src/threedpy/examples/husky-sockets-vert-mm.yaml
+storage_block:
+    type: 'rowed'
+    font_size: 6.0
+    x: 2
+    y: 1
+    z: 3
+    global:
+        shape: 'round_vert'
+rows:
+    - slots:
+        - {diameter: 11.85, depth: 14.0, scale: 1.03}
+        - {diameter: 11.85, depth: 14.0, scale: 1.03}
+        - {diameter: 12.95, depth: 14.0, scale: 1.03}

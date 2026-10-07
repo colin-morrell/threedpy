@@ -1,0 +1,27 @@
+# round_vert test: four rows (even count) of three slots, no labels
+# based on src/threedpy/examples/husky-sockets-vert-mm.yaml
+storage_block:
+    type: 'rowed'
+    font_size: 6.0
+    x: 2
+    y: 3
+    z: 3
+    global:
+        shape: 'round_vert'
+rows:
+    - slots:
+        - {diameter: 11.85, depth: 14.0, scale: 1.03}
+        - {diameter: 11.85, depth: 14.0, scale: 1.03}
+        - {diameter: 12.95, depth: 14.0, scale: 1.03}
+    - slots:
+        - {diameter: 12.95, depth: 14.0, scale: 1.03}
+        - {diameter: 14.15, depth: 14.0, scale: 1.02}
+        - {diameter: 16.95, depth: 14.0, scale: 1.01}
+    - slots:
+        - {diameter: 16.95, depth: 14.0, scale: 1.01}
+        - {diameter: 17.85, depth: 14.0, scale: 1.01}
+        - {diameter: 19.75, depth: 14.0, scale: 1.01}
+    - slots:
+        - {diameter: 21.85, depth: 14.0, scale: 1.01}
+        - {diameter: 23.85, depth: 14.0, scale: 1.01}
+        - {diameter: 23.85, depth: 14.0, scale: 1.01}
