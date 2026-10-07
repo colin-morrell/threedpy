@@ -39,6 +39,7 @@ class Shape(Enum):
     Slot cross-section.
 
     --> ROUND_HORZ: cylinder w/ circular faces perpendicular to Z-axis (long socket on its side)
+        --> currently only rotates towards +Y
     --> ROUND_VERT: cylinder w/ circular faces parallel to Z-axis (short socket standing upright)
     """
 
@@ -98,9 +99,9 @@ class Slot:
             Cylinder(
                 self.scaled_radius,
                 self.scaled_depth,
-                rotation=self.build_rotation,
+                rotation=self.built_rotation,
                 align=(Align.CENTER, Align.CENTER),
-                mode=self.build_mode
+                mode=self.built_mode
             )
         elif self.shape == Shape.PRISM_RECT:
             Box(
@@ -143,25 +144,26 @@ class Slot:
         logging.debug('|   coords: x={}, y={}, z={}'.format(*coords))
         logging.debug('| diameter: {}'.format(self.scaled_diameter))
         logging.debug('|    depth: {}'.format(self.scaled_depth))
-        logging.debug('|     mode: {}'.format(self.build_mode))
-        logging.debug('| rotation: {}'.format(self.build_rotation))
+        logging.debug('|     mode: {}'.format(self.built_mode))
+        logging.debug('| rotation: {}'.format(self.built_rotation))
         logging.debug('-'*25)
 
     @property
-    def build_mode(self):
+    def built_mode(self):
         if not self.debug:
             return Mode.SUBTRACT
         return Mode.ADD
 
     @property
-    def build_rotation(self) -> int:
+    def built_radius(self):
+        """Profile of slot along the X-axis."""
+        return self.scaled_diameter / 2
+
+    @property
+    def built_rotation(self) -> int:
         if self.shape == Shape.ROUND_HORZ:
             return (90, 0, 0)
         return (0, 0, 0)
-
-    @property
-    def built_radius(self):
-        return self.scaled_diameter / 2
 
     @property
     def scaled_depth(self) -> float:
@@ -258,7 +260,7 @@ class Row:
 
     @property
     def min_y_height(self) -> float:
-        """Smallest diameter slot within the row."""
+        """Smallest y-height slot within the row."""
         return min((slot.y_built_height for slot in self.slots), default=0.0)
 
     @property
