@@ -12,7 +12,7 @@ dist/
 build/
 *.egg-info/
 
-# virtualenvs (poetry keeps its own in ~/.cache/pypoetry, but in-project ones land here)
+# virtualenv (uv sync creates it in-project)
 .venv/
 
 # editor swap/backup files

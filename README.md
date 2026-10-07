@@ -4,28 +4,37 @@ Generate gridfinity bins and socket/tool storage blocks with [build123d](https:/
 
 ## Setup
 
-Requires Python 3.12 and [Poetry](https://python-poetry.org/docs/#installation) 2.x.
+Requires [uv](https://docs.astral.sh/uv/getting-started/installation/), which also installs Python
+3.12 if it's missing.
 
 ```sh
-# create the venv with Python 3.12
-poetry env use python3.12
-
-# install dependencies + threedpy itself (editable)
-poetry install
-
-# confirm which venv is in use
-poetry env info --path
+# create .venv and install dependencies + threedpy itself (editable)
+uv sync
 ```
 
-To activate the venv in your current shell (so `poetry run` can be dropped from the commands
-below):
+`uv run <command>` runs a command in the venv, syncing it first if `pyproject.toml` or `uv.lock`
+changed. To activate the venv in your current shell instead (so `uv run` can be dropped from the
+commands below):
 
 ```sh
-eval $(poetry env activate)
+source .venv/bin/activate
 ```
+
+Add dependencies with `uv add <package>` (`uv add --dev <package>` for dev tools), which updates
+`pyproject.toml` and `uv.lock` together.
 
 Slot labels are drawn in IBM Plex Mono Bold, bundled in `src/threedpy/fonts/` (licensed under the SIL
 Open Font License; see `src/threedpy/fonts/OFL.txt`).
+
+### Linting and formatting
+
+[ruff](https://docs.astral.sh/ruff/) is a dev dependency, configured in `pyproject.toml`
+(100-column lines, single quotes):
+
+```sh
+uv run ruff check src
+uv run ruff format src
+```
 
 ## Usage
 
@@ -36,7 +45,7 @@ session keeps models in memory between runs, so you can tweak and rebuild a part
 re-running everything, and inspect intermediate objects as you go.
 
 ```sh
-poetry run ipython
+uv run ipython
 ```
 
 Send cells to the session from your editor (e.g. vim-ipython-cell / vim-slime, or VS Code's
@@ -54,16 +63,16 @@ viewer at <http://localhost:32323> (set `YACV_PORT` to change the port).
 ### CLI
 
 ```sh
-poetry run threedpy --help
+uv run threedpy --help
 
 # storage block laid out and sized by the YAML's "storage_block" mapping
-poetry run threedpy build src/threedpy/examples/husky-sockets-vert-mm.yaml -o block.stl
+uv run threedpy build src/threedpy/examples/husky-sockets-vert-mm.yaml -o block.stl
 
 # override the YAML's layout type and size
-poetry run threedpy build input.yaml -t positional -x 2 -y 3 -z 3 -o block.stl
+uv run threedpy build input.yaml -t positional -x 2 -y 3 -z 3 -o block.stl
 
 # test fitments for a 12.95mm diameter, 7mm deep slot at several scales
-poetry run threedpy scale-test 12.95 7 -o tests/ -s 1.01 1.02 1.03
+uv run threedpy scale-test 12.95 7 -o tests/ -s 1.01 1.02 1.03
 ```
 
 `-t`, `-x`/`-y`/`-z` (gridfinity units) and `-n` override the YAML's storage block settings. `--arrange`
