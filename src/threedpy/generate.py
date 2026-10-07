@@ -81,8 +81,8 @@ def positional_storage_block(block: StorageBlock, arrange: bool=False):
     """ Generate a gridfinity box with manually-specified positions for each slot.
 
     --> Does not currently support labels.
-    --> arrange: for fine-tuning arrangement of the slots. skips time-expensive call to build
-        gridfinity base. """
+    --> arrange: skips time-expensive call to build gridfinity base, good for fine-tuning
+    """
 
     # TODO --> bounds checks
 
@@ -96,15 +96,9 @@ def positional_storage_block(block: StorageBlock, arrange: bool=False):
             with Locations((0,0,0)):
                 block.build_test_surface(rowed_storage_block)
 
-        for slot in block.slots():
-            coords = (
-                slot.x,
-                slot.y,
-                block.z_mm - slot.z
-            )
-            with Locations(coords):
-                slot.log_slot_creation(coords)
-                slot.build_shape()
+        # TODO --> test meh
+        top_face = part.faces().sort_by(Axis.Z)[-1]
+        block.build_slots(labels=None, top_face=top_face)
 
     return part
 
@@ -131,7 +125,6 @@ def rowed_storage_block(
     block.log_storage_block_creation()
 
     with BuildPart() as part:
-
         # establish work surface
         if not arrange:
             gf_box = build_gf_box(block.x_gfu, block.y_gfu, block.z_gfu)
@@ -147,7 +140,6 @@ def rowed_storage_block(
 
         # face of working surface on which label text will (optionally) be drawn + extruded
         top_face = part.faces().sort_by(Axis.Z)[-1]
-
         block.build_slots(labels=labels, top_face=top_face)
 
     return part
@@ -171,6 +163,9 @@ def scale_test(
         preview: bool = True,
     ):
     """Generate test fitments for a given diameter using provided scale(s)."""
+
+    # TODO --> update for all Shapes
+    # TODO --> variable margins (3 below)
 
     width = diameter + 3
     length = width
@@ -223,7 +218,8 @@ def storage_block_from_args(args: argparse.Namespace) -> StorageBlock:
         block_type=args.type,
         x=args.x,
         y=args.y,
-        z=args.z
+        z=args.z,
+        debug=args.debug
     )
     missing = [axis for axis in ('x', 'y', 'z') if not getattr(block, axis)]
     if missing:
@@ -265,6 +261,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help='use a plain box instead of the (slow) gridfinity base, for arranging slots'
     )
     build.add_argument('--no-show', action='store_true', help='skip the yacv preview')
+    build.add_argument(
+        '--debug',
+        action='store_true',
+        help='draw slots as solids raised above the surface, plus row markers'
+    )
     build.add_argument(
         '--no-labels',
         action='store_true',

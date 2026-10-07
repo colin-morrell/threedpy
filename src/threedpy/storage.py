@@ -68,7 +68,11 @@ class Slot:
     # TODO --> validation (rectangle can't have length/width 0, etc)
     # TODO --> center option for x/y. calc box_len / slot_len and offset for spacing
 
+    # TODO --> scoops for horz
+
+    debug: bool = False
     label: str = ''
+    # TODO --> default to None
     shape: Shape = Shape.ROUND_VERT
     diameter: float = 0.0
     depth: float = 0.0
@@ -89,13 +93,15 @@ class Slot:
         if self.shape in (Shape.ROUND_VERT, Shape.ROUND_HORZ):
             Cylinder(
                 self.scaled_radius,
-                self.depth,
-                rotation=(self.rotation, 0, 0),
-                align=(Align.CENTER, Align.MIN),
-                mode=Mode.SUBTRACT
+                self.scaled_depth,
+                rotation=self.build_rotation,
+                align=(Align.CENTER, Align.CENTER),
+                mode=self.build_mode
             )
         elif self.shape == Shape.PRISM_RECT:
             Box(
+                # TODO --> scaled
+                # TODO --> center align both axes
                 self.width,
                 self.length,
                 self.depth,
@@ -114,7 +120,7 @@ class Slot:
             self.label,
             font_size=self.font_size,
             font_path=FONT_PATH,
-            align=(Align.CENTER, Align.MIN)
+            align=(Align.CENTER, Align.CENTER)
         )
 
     def log_label_creation(self, coords: tuple) -> None:
@@ -122,7 +128,6 @@ class Slot:
         logging.debug('[!] BUILDING LABEL [!]')
         logging.debug('|    label: {}'.format(self.label))
         logging.debug('|   coords: x={}, y={}'.format(*coords))
-        logging.debug('|    depth: {}'.format(self.depth))
         logging.debug('-'*25)
 
     def log_slot_creation(self, coords: tuple) -> None:
@@ -130,43 +135,68 @@ class Slot:
         logging.debug('[!] BUILDING SLOT [!]')
         logging.debug('|    label: {}'.format(self.label))
         logging.debug('|    shape: {}'.format(self.shape))
+        logging.debug('|   slot_z: {}'.format(self.z))
         logging.debug('|   coords: x={}, y={}, z={}'.format(*coords))
-        logging.debug('|    depth: {}'.format(self.depth))
-        logging.debug('| rotation: {}'.format(self.rotation))
+        logging.debug('| diameter: {}'.format(self.scaled_diameter))
+        logging.debug('|    depth: {}'.format(self.scaled_depth))
+        logging.debug('|     mode: {}'.format(self.build_mode))
+        logging.debug('| rotation: {}'.format(self.build_rotation))
         logging.debug('-'*25)
 
     @property
-    def rotation(self) -> int:
+    def build_mode(self):
+        if not self.debug:
+            return Mode.SUBTRACT
+        return Mode.ADD
+
+    @property
+    def build_rotation(self) -> int:
         if self.shape == Shape.ROUND_HORZ:
-            return 90
-        return 0
+            return (90, 0, 0)
+        return (0, 0, 0)
+
+    @property
+    def built_radius(self):
+        return self.scaled_diameter / 2
 
     @property
     def scaled_depth(self) -> float:
-        return self.depth * self.scale
+        return round(self.depth * self.scale, 2)
 
     @property
     def scaled_diameter(self) -> float:
-        return self.diameter * self.scale
+        return round(self.diameter * self.scale, 2)
 
     @property
     def scaled_radius(self) -> float:
-        return self.scaled_diameter / 2
+        return round(self.scaled_diameter / 2, 2)
+
+    @property
+    def y_built_height(self) -> float:
+        """
+        The slot's dimensions on the Y-axis depend on its orientation:
+        --> ROUND_HORZ --> Y corresponds to depth
+        --> ROUND_VERT --> Y corresponds to diameter
+        """
+        if self.shape == Shape.ROUND_HORZ:
+            return self.scaled_depth + self.scaled_radius
+        return self.scaled_diameter
 
     @property
     def z(self) -> float:
         """
         How far to offset the slot below (-Z) work surface's top face.
 
-        --> Cylindrical (circular faces parallel to work surface) offset by their depth.
-        --> Horizontal (circular faces perpendicular to work surface) default to half their scaled
-        radius, or can be manually offset by a specified (negative) amount in the YAML config.
+        --> ROUND_VERT offset by their depth.
+        --> ROUND_HORZ offset by z_offset or half their scaled depth if not specified.
         """
         if self.shape == Shape.ROUND_HORZ:
-            if self.z_offset == 0.0:
-                return -self.scaled_radius
+            # with default 0.0 --> slot will cut -Z by half its diameter
             return self.z_offset
-        return self.depth
+        if not self.debug:
+            return self.scaled_depth
+        # places slots above surface for debugging
+        return self.scaled_depth * .5
 
 
 @dataclass
@@ -177,6 +207,7 @@ class Row:
     Row's Slots are generated left-to-right along the X-axis.
     """
 
+    debug: bool = False
     font_size: float = 6.0
     name: str = ''
     slots: DoublyLinkedList[Slot] = field(default_factory=DoublyLinkedList)
@@ -185,8 +216,19 @@ class Row:
 
     def add_slot(self, slot: Slot) -> Slot:
         slot.font_size = self.font_size
+        slot.debug = self.debug
         self.slots.append(slot)
         return slot
+
+    def build_row_marker(self, width: float) -> None:
+        """Draw 1mm (Y) x 1mm (Z) box along the row's Y position."""
+        Box(
+            width,
+            1,
+            1,
+            align=(Align.CENTER, Align.CENTER),
+            mode=Mode.ADD
+        )
 
     @property
     def font_spacing(self) -> float:
@@ -197,22 +239,23 @@ class Row:
     @property
     def height(self) -> float:
         """Total row height based on the max diameter + font size."""
-        return self.max_diameter + self.font_size + self.font_spacing
+        return self.max_y_height + self.font_size + self.font_spacing
 
     @property
-    def max_diameter(self) -> float:
-        """Largest diameter slot within the row."""
-        return max((slot.scaled_diameter for slot in self.slots), default=0.0)
+    def max_y_height(self) -> float:
+        """Largest y-height slot within the row."""
+        return max((slot.y_built_height for slot in self.slots), default=0.0)
 
     @property
     def max_radius(self) -> float:
+        # TODO --> rename this probably
         """Largest radius slot within the row."""
-        return (self.max_diameter / 2)
+        return (self.max_y_height / 2)
 
     @property
-    def min_diameter(self) -> float:
+    def min_y_height(self) -> float:
         """Smallest diameter slot within the row."""
-        return min((slot.scaled_diameter for slot in self.slots), default=0.0)
+        return min((slot.y_built_height for slot in self.slots), default=0.0)
 
     @property
     def total_diameter(self) -> float:
@@ -286,6 +329,9 @@ class StorageBlock:
     # TODO --> auto allocate slots given # rows
     # TODO --> auto allocate slots/rows given GFU
 
+    # TODO --> debug flag --> draw row markers
+
+    debug: bool = False
     name: str = ''
     type: StorageBlockType = StorageBlockType.ROWED
     font_size: float = 6.0
@@ -300,6 +346,9 @@ class StorageBlock:
 
     def add_row(self, row: Row) -> Row:
         logger.debug('add_row(): {} slots'.format(len(row)))
+        row.debug = self.debug
+        for slot in row.slots:
+            slot.debug = self.debug
         self.rows.append(row)
         return row
 
@@ -310,18 +359,31 @@ class StorageBlock:
         """
         return self.add_row(Row(name=name, slots=DoublyLinkedList(slots)))
 
+    def build_row_markers(self) -> None:
+        """Draw 1mm (Y) x 1mm (Z) box along each row's Y position for debugging."""
+        for row in self.rows:
+            coords = (
+                0,
+                row.y,
+                self.z_mm
+            )
+            with Locations(coords):
+                row.build_row_marker(self.x_mm)
+
     def build_slots(self, labels: bool=True, top_face=None):
         """
         Iterate through all slots of all rows and build their specified shapes (and optional
         labels.)
         """
+        if self.debug:
+            self.build_row_markers()
         for row in self.rows:
             for slot in row.slots:
                 # generate slot
                 coords = (
-                    slot.x,
-                    slot.y,
-                    self.z_mm - slot.z
+                    round(slot.x, 3),
+                    round(slot.y, 3),
+                    round(self.z_mm - slot.z, 3)
                 )
                 slot.log_slot_creation(coords)
                 with Locations(coords):
@@ -330,8 +392,8 @@ class StorageBlock:
                 if labels and slot.label:
                     # generate label
                     label_coords = (
-                        slot.x,
-                        row.y_label
+                        round(slot.x, 3),
+                        round(row.y_label, 3)
                     )
                     slot.log_label_creation(label_coords)
                     with BuildSketch(top_face) as label:
@@ -395,6 +457,8 @@ class StorageBlock:
     def y_align_rows(self) -> None:
         """Y-align each row, leaving even spacing between rows + top/bottom edges.
 
+        --> with (Align.CENTER, Align.CENTER), row Y-position is at the bottom of the slot??
+
         --> First row initially aligns with top edge (max Y value, or y_mm*.5, since 0 is center.)
         --> Other rows initially align with the previous row.
 
@@ -409,7 +473,9 @@ class StorageBlock:
                 row.value.y -= self.y_row_spacing
             row.value.y -= row.value.height
             for slot in row.value.slots:
-                slot.y = row.value.y
+                # (Align.CENTER, Align.MIN) --> slot.y = row.value.y
+                # (Align.CENTER, Align.CENTER) --> +offset by half slot Y height
+                slot.y = (row.value.y + (slot.y_built_height / 2))
                 # center each slot along their row's Y
                 slot.y += (row.value.max_radius - slot.scaled_radius)
 
@@ -453,17 +519,17 @@ class StorageBlock:
     @property
     def z_mm(self) -> float:
         """Height in mm (GFU_HEIGHT spec is 7mm.)"""
-        return self.z * GFU_HEIGHT
+        return round(self.z * GFU_HEIGHT, 3)
 
     @property
     def y_margin_total(self) -> float:
         """Total space between rows + top/bottom edges."""
-        return self.y_mm - self.rows_height
+        return round(self.y_mm - self.rows_height, 2)
 
     @property
     def y_row_spacing(self) -> float:
         """Amount of space between each row + top/bottom edges."""
-        return self.y_margin_total / (self.num_rows + 2)
+        return round(self.y_margin_total / (self.num_rows + 2), 2)
 
     def __iter__(self) -> Iterator[Row]:
         return iter(self.rows)
@@ -502,7 +568,8 @@ def load_storage_block(
         block_type: StorageBlockType | str | None = None,
         x: int | None = None,
         y: int | None = None,
-        z: float | None = None
+        z: float | None = None,
+        debug: bool = False
     ) -> StorageBlock:
     """ Build a StorageBlock (and its Rows) from a parsed YAML config.
 
@@ -512,6 +579,7 @@ def load_storage_block(
         'z_mm'), and 'global' (defaults for every slot, see load_rows).
     --> X/Y given in mm are rounded up to whole units; Z may be fractional.
     --> name/block_type/x/y/z arguments (e.g. from the CLI) override the YAML values.
+    --> debug is passed down to every Row and Slot.
     --> Missing dimensions are left at 0."""
 
     block_data = data.get('storage_block', {})
@@ -529,6 +597,7 @@ def load_storage_block(
             dims[axis] = override
 
     block = StorageBlock(
+        debug=debug,
         name=name or block_data.get('name', ''),
         type=block_type or block_data.get('type', StorageBlockType.ROWED),
         font_size=block_data.get('font_size', StorageBlock.font_size),
@@ -547,13 +616,16 @@ def load_storage_block_from_path(
         block_type: StorageBlockType | str | None = None,
         x: int | None = None,
         y: int | None = None,
-        z: float | None = None
+        z: float | None = None,
+        debug: bool = False
     ) -> StorageBlock:
     """Build a StorageBlock from a YAML file. The name defaults to the filename if not set in the
     YAML."""
     logger.info('loading storage block from {}'.format(path))
     with open(path) as f:
-        block = load_storage_block(yaml.safe_load(f), name=name, block_type=block_type, x=x, y=y, z=z)
+        block = load_storage_block(
+            yaml.safe_load(f), name=name, block_type=block_type, x=x, y=y, z=z, debug=debug
+        )
     if not block.name:
         block.name = os.path.splitext(os.path.basename(path))[0]
     return block
