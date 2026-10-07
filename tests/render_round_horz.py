@@ -1,8 +1,8 @@
 """
 Render round_horz row-count tests in yacv.
 
---> labeled versions in front row
---> no-label versions in a row behind (+Y)
+--> one row per test (single-row in front, then odd-rows, even-rows); see render_grid.py
+--> labeled versions on the left, no-label versions on the right (+X)
 --> run with `uv run python tests/render_round_horz.py` or `%run tests/render_round_horz.py`
 """
 
@@ -19,7 +19,7 @@ from render_grid import build_grid  # noqa: E402
 
 # %%
 
-shown, names, _, _ = build_grid('round-horz')
+shown, names = build_grid(['round-horz'])
 # one call so auto_clear (default) removes everything previously shown except these blocks
 show(*shown, names=names, **SHOW_KWARGS)
 

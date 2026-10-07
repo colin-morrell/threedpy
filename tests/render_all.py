@@ -1,7 +1,8 @@
 """
-Render all row-count tests in yacv: the round_vert grid, with the round_horz grid to its right (+X).
+Render all row-count tests in yacv, round_vert and round_horz together.
 
---> each grid: labeled versions in front, no-label versions behind (see render_grid.py)
+--> one row per test (single-row in front, then odd-rows, even-rows); see render_grid.py
+--> columns: round_vert labeled, round_vert no-label, round_horz labeled, round_horz no-label
 --> run with `uv run python tests/render_all.py` or `%run tests/render_all.py`
 """
 
@@ -18,10 +19,9 @@ from render_grid import build_grid  # noqa: E402
 
 # %%
 
-vert, vert_names, x, _ = build_grid('round-vert')
-horz, horz_names, _, _ = build_grid('round-horz', x=x)
+shown, names = build_grid(['round-vert', 'round-horz'])
 # one call for all 12, since each show() with auto_clear (default) removes everything else
-show(*vert, *horz, names=vert_names + horz_names, **SHOW_KWARGS)
+show(*shown, names=names, **SHOW_KWARGS)
 
 
 # %%
