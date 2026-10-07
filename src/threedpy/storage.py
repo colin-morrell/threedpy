@@ -116,7 +116,7 @@ class Row:
     def font_spacing(self) -> float:
         """Distance between bottom of slot and top of label."""
         #return self.font_size / 3
-        return 0.0
+        return 1.0
 
     @property
     def has_labels(self) -> bool:
@@ -176,10 +176,8 @@ class Row:
         """ Y-position of slot labels.
 
         --> Offset downward (-Y) by font_size to sit below their respective slot.
-        --> Since slots are Y-centered with each other, labels start from the row's Y position to
-            stay aligned with each other.
         """
-        return self.y - self.font_size
+        return self.y - self.max_radius - (self.font_size / 2) - self.font_spacing
 
     def built_scoop(self) -> Scoop:
         """The full-row scoop to draw (see full_scoop.)"""
@@ -343,6 +341,7 @@ class StorageBlock:
                     extrude(label.sketch, amount=1.0)
 
                 if slot.scoops:
+                    # generate any individual slot scoops
                     scoop_coords = (
                         round(slot.x, 3),
                         round(row.y_scoop, 3),
@@ -353,6 +352,7 @@ class StorageBlock:
                         slot.built_scoop().build(slot.built_mode)
 
             if row.full_scoop and len(row):
+                # generate any whole-row scoops
                 scoop = row.built_scoop()
                 scoop_coords = (
                     round(row.x_scoop, 3),
@@ -419,29 +419,18 @@ class StorageBlock:
     def y_align_rows(self) -> None:
         """Y-align each row, leaving even spacing between rows + top/bottom edges.
 
-        --> with (Align.CENTER, Align.CENTER), row Y-position is at the bottom of the slot??
-
-        --> First row initially aligns with top edge (max Y value, or y_mm*.5, since 0 is center.)
-        --> Other rows initially align with the previous row.
-
-        --> All rows then offset downward (-Y) by self.y_row_spacing
-        --> All rows then offset again by their own height."""
-
-        # TODO --> y spacing isn't quite right for round_horz
-
-        for row in self.rows.nodes():
-            if not row.prev:
-                row.value.y = 0 + (self.y_mm / 2)
-            else:
-                row.value.y = row.prev.value.y
-                row.value.y -= self.y_row_spacing
-            row.value.y -= row.value.height
-            for slot in row.value.slots:
-                # (Align.CENTER, Align.MIN) --> slot.y = row.value.y
-                # (Align.CENTER, Align.CENTER) --> +offset by half slot Y height
-                slot.y = (row.value.y + (slot.y_built_height / 2))
-                # center each slot along their row's Y
-                slot.y += (row.value.max_radius - slot.scaled_radius)
+        This Y-value will be the center of the row.
+        --> no labels: slots are centered directly on the row
+        --> labels: the slot/label combined are centered on the row
+        """
+        cursor = self.y_mm / 2
+        for row in self.rows:
+            cursor -= self.y_row_spacing
+            # row.y is the middle of the row's slots; any label space sits below them
+            row.y = cursor - row.max_y_height / 2
+            for slot in row.slots:
+                slot.y = row.y
+            cursor -= row.height
 
     @property
     def num_rows(self) -> int:
@@ -498,7 +487,7 @@ class StorageBlock:
     @property
     def y_row_spacing(self) -> float:
         """Amount of space between each row + top/bottom edges."""
-        return round(self.y_margin_total / (self.num_rows + 2), 2)
+        return round(self.y_margin_total / (self.num_rows + 1), 2)
 
     def __iter__(self) -> Iterator[Row]:
         return iter(self.rows)

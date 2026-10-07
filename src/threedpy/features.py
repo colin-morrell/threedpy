@@ -128,6 +128,7 @@ class Scoop:
                 err = '[!] {} scoop: unknown key(s): {}'.format(owner, ', '.join(sorted(unknown)))
                 raise ValueError(err)
 
+
 class ScoopMode(Enum):
 
     SLOT_SCOOP = 'slot_scoop'
@@ -227,7 +228,7 @@ class Slot:
                 self.scaled_radius,
                 self.scaled_depth,
                 rotation=self.built_rotation,
-                align=(Align.CENTER, Align.CENTER),
+                align=self.built_align,
                 mode=self.built_mode
             )
         elif self.shape == Shape.PRISM_RECT:
@@ -275,6 +276,13 @@ class Slot:
         logging.debug('-'*25)
 
     @property
+    def built_align(self):
+        # also center along socket's length so slot.y is its middle
+        if self.shape == Shape.ROUND_HORZ:
+            return (Align.CENTER, Align.CENTER, Align.CENTER)
+        return (Align.CENTER, Align.CENTER)
+
+    @property
     def built_mode(self):
         if not self.debug:
             return Mode.SUBTRACT
@@ -311,7 +319,7 @@ class Slot:
         --> ROUND_VERT --> Y corresponds to diameter
         """
         if self.shape == Shape.ROUND_HORZ:
-            return self.scaled_depth + self.scaled_radius
+            return self.scaled_depth
         return self.scaled_diameter
 
     @property
