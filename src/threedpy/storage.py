@@ -2,27 +2,43 @@ import logging
 import math
 import os
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, replace
 from enum import Enum
 from typing import Any
 
 import yaml
 from build123d import (
     Align,
-    Axis,
+    BasePartObject,
+    Bezier,
     Box,
+    BuildLine,
+    BuildPart,
     BuildSketch,
     Cylinder,
+    Line,
     Locations,
     Mode,
-    Select,
+    Plane,
     Text,
-    edges,
     extrude,
-    fillet
+    make_face,
+    mirror
 )
 
-from threedpy.constants import FONT_PATH, GFU_GRID, GFU_GRID_NOMINAL, GFU_HEIGHT
+from threedpy.constants import (
+    FONT_PATH,
+    GFU_GRID,
+    GFU_GRID_NOMINAL,
+    GFU_HEIGHT
+)
+from threedpy.features import (
+    Label,
+    Scoop,
+    Shape,
+    Slot,
+    SCOOP_LENGTH
+)
 from threedpy.util import DoublyLinkedList
 
 # repo root, two levels up from src/threedpy/
@@ -38,46 +54,6 @@ def load_config() -> dict[str, Any]:
 logger = logging.getLogger(__name__)
 
 
-class Direction(Enum):
-    """
-    Direction in which the Item / resulting Slot should be rotated.
-
-    Orientation.VERTICAL will be None
-    """
-
-    # TODO --> return rotation(X,Y,Z) ?
-    UP = 'up'
-    DOWN = 'down'
-    LEFT = 'left'
-    RIGHT = 'right'
-
-
-class Orientation(Enum):
-    """
-    Orientation of the Item / resulting profile of the Slot.
-    """
-    # TODO --> holds Direction?
-    VERTICAL = 'vertical'
-    HORIZONTAL = 'horizontal'
-
-
-# TODO --> rename SlotShape
-class Shape(Enum):
-    """
-    Slot cross-section.
-
-    --> ROUND_HORZ: cylinder w/ circular faces perpendicular to Z-axis (long socket on its side)
-        --> currently only rotates towards +Y
-    --> ROUND_VERT: cylinder w/ circular faces parallel to Z-axis (short socket standing upright)
-    """
-    # TODO --> horz/vert should be combined once Item/Orientation/Direction are implemented
-    # TODO --> IRREGULAR
-
-    PRISM_HEXA = 'prism_hexa'
-    PRISM_RECT = 'prism_rect'
-    ROUND_HORZ = 'round_horz'
-    ROUND_VERT = 'round_vert'
-
 
 class StorageBlockType(Enum):
     """
@@ -90,202 +66,6 @@ class StorageBlockType(Enum):
     POSITIONAL = 'positional'
     ROWED = 'rowed'
 
-
-class Item:
-
-    # TODO --> encapsulate the item whose dimensions are specified in the yaml
-    # TODO --> import stl??
-
-    shape: Shape
-    orientation: Orientation = Orientation.VERTICAL
-    direction: Direction = None
-
-
-# TODO --> every class above this to item.py ??
-
-
-class Scoop:
-    # TODO
-    pass
-
-
-@dataclass
-class Slot:
-    """Slot
-
-    A single storage cavity.
-
-    --> All measurements in mm unless otherwise stated.
-    --> From a top-down view of the work surface, X is left/right and Y is up/down.
-    """
-    # TODO SLOT REFACTOR
-        # --> slot methodology should be entirely shape independent
-        # --> no length/width/diameter, everything in terms of x/y/z
-        # --> transformations like diameter -> depth should happen in Item w/ Orientation+Direction
-
-    # TODO --> validation (rectangle can't have length/width 0, etc)
-    # TODO --> center option for x/y. calc box_len / slot_len and offset for spacing
-
-    # TODO --> scoops for horz
-
-    debug: bool = False
-    label: str = ''
-    # TODO --> default to None
-    shape: Shape = Shape.ROUND_VERT
-    # None = unset, filled from the slot's Row or StorageBlock (see add_slot / add_row)
-    scoops: bool | None = None
-    # same as scoops; still None once built means labels are drawn
-    labels: bool | None = None
-    diameter: float = 0.0
-    depth: float = 0.0
-    font_size: float = 6.0
-    length: float = 0.0
-    width: float = 0.0
-    scale: float = 1.01
-    x: float = 0.0
-    y: float = 0.0
-    z_offset: float = 0.0
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.shape, Shape):
-            self.shape = Shape(self.shape)
-
-    def build_shape(self) -> None:
-        """Build the slot's shape using build123d."""
-        if self.shape in (Shape.ROUND_VERT, Shape.ROUND_HORZ):
-            Cylinder(
-                self.scaled_radius,
-                self.scaled_depth,
-                rotation=self.built_rotation,
-                align=(Align.CENTER, Align.CENTER),
-                mode=self.built_mode
-            )
-        elif self.shape == Shape.PRISM_RECT:
-            Box(
-                # TODO --> scaled
-                # TODO --> center align both axes
-                self.width,
-                self.length,
-                self.depth,
-                align=(Align.CENTER, Align.MIN),  # if the latter is CENTER, y=0
-                mode=Mode.SUBTRACT
-            )
-        else:
-            raise ValueError('[!] invalid slot shape: {}'.format(self.shape))
-
-    def build_scoops(self) -> None:
-        # TODO --> set scoop params in config.yaml
-        Cylinder(
-            self.scaled_radius * 1.6,
-            18.0,
-            rotation=(90, 0, 0),
-            align=(Align.CENTER, Align.CENTER),
-            mode=self.built_mode
-        )
-        rim = edges(Select.LAST).group_by(Axis.Z)[-1]
-        fillet(rim, radius=2.0)
-
-    @property
-    def draws_label(self) -> bool:
-        """Whether a label is drawn: labels isn't False and there's label text."""
-        return self.labels is not False and bool(self.label)
-
-    def build_label(self) -> None:
-        """
-        Build an embossed label. By default, labels are placed below their slots with font size
-        6 and 1mm extrusion.
-        """
-        Text(
-            self.label,
-            font_size=self.font_size,
-            font_path=FONT_PATH,
-            align=(Align.CENTER, Align.CENTER)
-        )
-
-    def log_label_creation(self, coords: tuple) -> None:
-        logging.debug('-'*25)
-        logging.debug('[!] BUILDING LABEL [!]')
-        logging.debug('|    label: {}'.format(self.label))
-        logging.debug('|   coords: x={}, y={}'.format(*coords))
-        logging.debug('-'*25)
-
-    def log_scoop_creation(self, coords: tuple) -> None:
-        logging.debug('-'*25)
-        logging.debug('[!] BUILDING SCOOP [!]')
-        logging.debug('|   coords: x={}, y={}, z={}'.format(*coords))
-        logging.debug('-'*25)
-
-    def log_slot_creation(self, coords: tuple) -> None:
-        logging.debug('-'*25)
-        logging.debug('[!] BUILDING SLOT [!]')
-        logging.debug('|    label: {}'.format(self.label))
-        logging.debug('|    shape: {}'.format(self.shape))
-        logging.debug('|   slot_z: {}'.format(self.z))
-        logging.debug('|   coords: x={}, y={}, z={}'.format(*coords))
-        logging.debug('| diameter: {}'.format(self.scaled_diameter))
-        logging.debug('|    depth: {}'.format(self.scaled_depth))
-        logging.debug('|     mode: {}'.format(self.built_mode))
-        logging.debug('| rotation: {}'.format(self.built_rotation))
-        logging.debug('-'*25)
-
-    @property
-    def built_mode(self):
-        if not self.debug:
-            return Mode.SUBTRACT
-        return Mode.ADD
-
-    @property
-    def built_radius(self):
-        """Profile of slot along the X-axis."""
-        return self.scaled_diameter / 2
-
-    @property
-    def built_rotation(self) -> int:
-        if self.shape == Shape.ROUND_HORZ:
-            return (90, 0, 0)
-        return (0, 0, 0)
-
-    @property
-    def scaled_depth(self) -> float:
-        return round(self.depth * self.scale, 2)
-
-    @property
-    def scaled_diameter(self) -> float:
-        return round(self.diameter * self.scale, 2)
-
-    @property
-    def scaled_radius(self) -> float:
-        return round(self.scaled_diameter / 2, 2)
-
-    @property
-    def y_built_height(self) -> float:
-        """
-        The slot's dimensions on the Y-axis depend on its orientation:
-        --> ROUND_HORZ --> Y corresponds to depth
-        --> ROUND_VERT --> Y corresponds to diameter
-        """
-        if self.shape == Shape.ROUND_HORZ:
-            return self.scaled_depth + self.scaled_radius
-        return self.scaled_diameter
-
-    @property
-    def z(self) -> float:
-        """
-        How far to offset the slot below (-Z) work surface's top face.
-
-        --> ROUND_VERT offset by their depth.
-        --> ROUND_HORZ offset by z_offset or half their scaled depth if not specified.
-        """
-        if self.shape == Shape.ROUND_HORZ:
-            # with default 0.0 --> slot will cut -Z by half its diameter
-            return self.z_offset
-        if not self.debug:
-            return self.scaled_depth
-        # places slots above surface for debugging
-        return self.scaled_depth * .5
-
-
-# TODO --> features class for common features between storage/row/slot: scoops, labels, etc
 
 @dataclass
 class Row:
@@ -300,12 +80,20 @@ class Row:
     labels: bool | None = None
     name: str = ''
     scoops: bool | None = None
+    # one scoop across the whole row: True (sized from its slots, see default_scoop), a mapping
+    # overriding those dimensions, or a Scoop
+    full_scoop: bool | dict | Scoop = False
     slots: DoublyLinkedList[Slot] = field(default_factory=DoublyLinkedList)
     width: float = 0.0
     _y: float = 0.0
 
+    def __post_init__(self) -> None:
+        Scoop.check_keys(self.full_scoop, "row '{}'".format(self.name))
+
     def add_slot(self, slot: Slot) -> Slot:
         slot.font_size = self.font_size
+        if slot.label is not None:
+            slot.label.font_size = self.font_size
         slot.debug = self.debug
         if slot.scoops is None:
             slot.scoops = self.scoops
@@ -393,11 +181,34 @@ class Row:
         """
         return self.y - self.font_size
 
+    def built_scoop(self) -> Scoop:
+        """The full-row scoop to draw (see full_scoop.)"""
+        spec = None if self.full_scoop is True else self.full_scoop
+        return Scoop.resolve(spec, self.default_scoop())
+
+    def default_scoop(self) -> Scoop:
+        """Scoop across the row: flat bottom spanning its slots' X extent, walls and depth from
+        its largest slot radius."""
+        radius = max((slot.scaled_radius for slot in self.slots), default=0.0)
+        return Scoop(flat_width=self.x_scoop_span, wall_width=radius, depth=radius)
+
+    @property
+    def x_scoop(self) -> float:
+        """X-position (center) of the row's slots, for a full-row scoop."""
+        left = min(slot.x - slot.scaled_radius for slot in self.slots)
+        return left + self.x_scoop_span / 2
+
+    @property
+    def x_scoop_span(self) -> float:
+        """X distance from the first slot's left edge to the last slot's right edge."""
+        left = min(slot.x - slot.scaled_radius for slot in self.slots)
+        right = max(slot.x + slot.scaled_radius for slot in self.slots)
+        return right - left
+
     @property
     def y_scoop(self) -> float:
-        """Y-position of slot scoops."""
-        # scoop depth hardcoded to 18.0 for the moment
-        return self.y + ((self.max_y_height + 9.0) / 2)
+        """Y-position of scoops."""
+        return self.y + ((self.max_y_height + SCOOP_LENGTH / 2) / 2)
 
     def __iter__(self) -> Iterator[Slot]:
         return iter(self.slots)
@@ -517,7 +328,7 @@ class StorageBlock:
                 )
                 slot.log_slot_creation(coords)
                 with Locations(coords):
-                    slot.build_shape()
+                    slot.build()
 
                 if labels and slot.draws_label:
                     # generate label
@@ -525,10 +336,10 @@ class StorageBlock:
                         round(slot.x, 3),
                         round(row.y_label, 3)
                     )
-                    slot.log_label_creation(label_coords)
+                    slot.label.log_label_creation(label_coords)
                     with BuildSketch(top_face) as label:
                         with Locations(label_coords):
-                            slot.build_label()
+                            slot.label.build()
                     extrude(label.sketch, amount=1.0)
 
                 if slot.scoops:
@@ -537,9 +348,20 @@ class StorageBlock:
                         round(row.y_scoop, 3),
                         round(self.z_mm, 3)
                     )
-                    slot.log_scoop_creation(scoop_coords)
                     with Locations(scoop_coords):
-                        slot.build_scoops()
+                        slot.built_scoop().log_scoop_creation(scoop_coords)
+                        slot.built_scoop().build(slot.built_mode)
+
+            if row.full_scoop and len(row):
+                scoop = row.built_scoop()
+                scoop_coords = (
+                    round(row.x_scoop, 3),
+                    round(row.y_scoop, 3),
+                    round(self.z_mm, 3)
+                )
+                logger.debug('building full-row scoop {} at {}'.format(scoop, scoop_coords))
+                with Locations(scoop_coords):
+                    scoop.build(Mode.ADD if self.debug else Mode.SUBTRACT)
 
     def build_test_surface(self, part) -> None:
         """
@@ -794,12 +616,26 @@ def load_storage_block_from_path(
     logger.info('loading storage block from {}'.format(path))
     with open(path) as f:
         block = load_storage_block(
-            yaml.safe_load(f), name=name, block_type=block_type, x=x, y=y, z=z, debug=debug,
+            yaml.safe_load(f),
+            name=name,
+            block_type=block_type,
+            x=x,
+            y=y,
+            z=z,
+            debug=debug,
             labels=labels
         )
     if not block.name:
         block.name = os.path.splitext(os.path.basename(path))[0]
     return block
+
+
+def _slot_from_config(config: dict[str, Any]) -> Slot:
+    """Build a Slot from its merged config, turning label text (e.g. '6' or 6) into a Label."""
+    label = config.get('label')
+    if label is not None and not isinstance(label, Label):
+        config = {**config, 'label': Label(label_text=str(label), font_size=config['font_size'])}
+    return Slot(**config)
 
 
 def load_rows(data: dict[str, Any], font_size: float = 6.0) -> list[Row]:
@@ -821,13 +657,18 @@ def load_rows(data: dict[str, Any], font_size: float = 6.0) -> list[Row]:
     rows_data = data['rows'] if 'rows' in data else [{'slots': data['slots']}]
     rows = []
     for row_data in rows_data:
-        row_defaults = {key: value for key, value in row_data.items() if key not in ('name', 'slots')}
-        slots = [Slot(**{**defaults, **row_defaults, **slot}) for slot in row_data['slots']]
+        row_defaults = {
+            key: value for key, value in row_data.items() if key not in ('name', 'slots', 'full_scoop')
+        }
+        slots = [
+            _slot_from_config({**defaults, **row_defaults, **slot}) for slot in row_data['slots']
+        ]
         rows.append(Row(
             font_size=max((slot.font_size for slot in slots), default=defaults['font_size']),
             name=row_data.get('name', ''),
             scoops=row_defaults.get('scoops', defaults.get('scoops')),
             labels=row_defaults.get('labels', defaults.get('labels')),
+            full_scoop=row_data.get('full_scoop', False),
             slots=DoublyLinkedList(slots)
         ))
     return rows
@@ -856,7 +697,9 @@ def main() -> None:
     logger.info('Starting')
     block = StorageBlock(name='block-1')
     row = block.add_row(Row(name='row-1'))
-    row.add_slot(Slot(label='M3', shape=Shape.PRISM_HEXA, diameter=12.0, depth=20.0))
+    row.add_slot(
+        Slot(label=Label(label_text='M3'), shape=Shape.PRISM_HEXA, diameter=12.0, depth=20.0)
+    )
     logger.info('Built {} with {} row(s)'.format(block.name, len(block)))
 
 

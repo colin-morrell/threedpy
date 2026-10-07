@@ -11,6 +11,7 @@ from build123d import (
     BuildSketch,
     Circle,
     Cylinder,
+    Location,
     Locations,
     Rectangle,
     RegularPolygon,
@@ -23,12 +24,14 @@ from gridfinity_build123d import (
 )
 from gridfinity_build123d.constants import gridfinity_standard
 from threedpy.constants import FONT_PATH, GFU_GRID, GFU_HEIGHT
+from threedpy.features import (
+    Shape,
+    Slot
+)
 from threedpy.storage import (
     StorageBlock,
     StorageBlockType,
     Row,
-    Shape,
-    Slot,
     load_config,
     load_storage_block_from_path,
     load_rows_from_path,
@@ -177,6 +180,7 @@ def scale_test(
     width = diameter + 3
     length = width
 
+    previews, names = [], []
     for scale in scales:
 
         scaled_diameter = diameter * scale
@@ -205,13 +209,19 @@ def scale_test(
                     )
             extrude(amount=-depth, mode=Mode.SUBTRACT)
 
-        if preview:
-            show(scale_test, **SHOW_KWARGS)
         str_scale = str(scale).replace('.', '')
         str_diameter = str(diameter)
         filename = 'test-{}-{}.stl'.format(str_scale, str_diameter)
         export_path = os.path.join(path, filename)
         export_as_stl(scale_test, export_path)
+
+        # side by side along X, 5mm apart
+        previews.append(scale_test.part.moved(Location((len(previews) * (width + 5), 0, 0))))
+        names.append(os.path.splitext(filename)[0])
+
+    if preview:
+        # one call so auto_clear (default) removes everything previously shown except these tests
+        show(*previews, names=names, **SHOW_KWARGS)
 
     return None
 
