@@ -24,8 +24,12 @@ from threedpy.util import DoublyLinkedList
 # repo root, two levels up from src/threedpy/
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'config.yaml')
 
-with open(CONFIG_PATH) as f:
-    CONFIG = yaml.safe_load(f)
+
+def load_config() -> dict[str, Any]:
+    """Read config.yaml fresh on each call, so edits apply without re-importing this module."""
+    with open(CONFIG_PATH) as f:
+        return yaml.safe_load(f) or {}
+
 
 logger = logging.getLogger(__name__)
 
@@ -329,8 +333,6 @@ class StorageBlock:
     # TODO --> auto allocate slots given # rows
     # TODO --> auto allocate slots/rows given GFU
 
-    # TODO --> debug flag --> draw row markers
-
     debug: bool = False
     name: str = ''
     type: StorageBlockType = StorageBlockType.ROWED
@@ -464,6 +466,8 @@ class StorageBlock:
 
         --> All rows then offset downward (-Y) by self.y_row_spacing
         --> All rows then offset again by their own height."""
+
+        # TODO --> y spacing isn't quite right for round_horz
 
         for row in self.rows.nodes():
             if not row.prev:

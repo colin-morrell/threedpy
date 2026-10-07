@@ -135,9 +135,11 @@ class DoublyLinkedList[T]:
 
 
 def build_gf_base(grid_x: int, grid_y: int):
-
-    # TODO --> fix maghole scaling to be pressure fit
-    base = BaseEqual(grid_x, grid_y, [MagHole(BottomCorners())])
+    base = BaseEqual(
+        grid_x,
+        grid_y,
+        [MagHole(BottomCorners())]
+    )
     return base
 
 

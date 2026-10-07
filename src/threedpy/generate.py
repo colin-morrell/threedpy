@@ -29,6 +29,7 @@ from threedpy.storage import (
     Row,
     Shape,
     Slot,
+    load_config,
     load_storage_block_from_path,
     load_rows_from_path,
     load_slots_from_path
@@ -39,6 +40,11 @@ from threedpy.util import (
     export_as_stl
 )
 from yacv_server import show
+
+# yacv preview colors from config.yaml; unset keys fall back to yacv's defaults
+# re-read on every %run since this module is re-executed but threedpy.storage isn't
+CONFIG = load_config()
+SHOW_KWARGS = {key: CONFIG[key] for key in ('color_faces', 'color_edges') if CONFIG.get(key)}
 
 
 # %%
@@ -72,7 +78,7 @@ def labeled_bin(x: int, y: int, z: int, txt: str):
                      )
 
         extrude(amount=1, mode=Mode.ADD)
-        show(gf_bin)
+        show(gf_bin, **SHOW_KWARGS)
 
         return gf_bin
 
@@ -117,8 +123,6 @@ def rowed_storage_block(
     --> labels: whether to emboss slots' labels. defaults to below (-Y) slot.
     """
 
-    # TODO --> support horizontal
-
     if (block.x_gfu == 0 or block.y_gfu == 0 or block.z_gfu == 0):
         raise ValueError('[!] x/y/z must be > 0')
 
@@ -132,10 +136,10 @@ def rowed_storage_block(
             with Locations((0,0,0)):
                 block.build_test_surface(rowed_storage_block)
 
-        # determine each rows' Y-position
+        # determine each row's Y-position
         block.y_align_rows()
 
-        # determine each slots' X-position (per row)
+        # per row, determine each slot's X-position
         block.x_align_slots()
 
         # face of working surface on which label text will (optionally) be drawn + extruded
@@ -165,6 +169,7 @@ def scale_test(
     """Generate test fitments for a given diameter using provided scale(s)."""
 
     # TODO --> update for all Shapes
+        # TODO --> round_horz
     # TODO --> variable margins (3 below)
 
     width = diameter + 3
@@ -199,7 +204,7 @@ def scale_test(
             extrude(amount=-depth, mode=Mode.SUBTRACT)
 
         if preview:
-            show(scale_test)
+            show(scale_test, **SHOW_KWARGS)
         str_scale = str(scale).replace('.', '')
         str_diameter = str(diameter)
         filename = 'test-{}-{}.stl'.format(str_scale, str_diameter)
@@ -306,7 +311,7 @@ def main(argv: list[str] | None = None) -> None:
     part = generate_storage_block(block, arrange=args.arrange, labels=not args.no_labels)
 
     if not args.no_show:
-        show(part)
+        show(part, **SHOW_KWARGS)
     if args.out_path:
         export_as_stl(part, args.out_path)
 

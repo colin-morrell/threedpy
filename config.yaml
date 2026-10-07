@@ -1,1 +1,9 @@
 log_dir: '/mnt/e/log'
+
+# yacv preview colors, '#RRGGBB' or '#RRGGBBAA' (quoted bc # -> comment)
+# defaults
+# color_faces: '#ffbf00'
+# color_edges: '#1a1aff'
+
+color_faces: '#1E1C31'
+color_edges: '#CBE3E7'
