@@ -9,13 +9,17 @@ from typing import Any
 import yaml
 from build123d import (
     Align,
+    Axis,
     Box,
     BuildSketch,
     Cylinder,
     Locations,
     Mode,
+    Select,
     Text,
-    extrude
+    edges,
+    extrude,
+    fillet
 )
 
 from threedpy.constants import FONT_PATH, GFU_GRID, GFU_GRID_NOMINAL, GFU_HEIGHT
@@ -26,7 +30,7 @@ CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..
 
 
 def load_config() -> dict[str, Any]:
-    """Read config.yaml fresh on each call, so edits apply without re-importing this module."""
+    """Read config.yaml fresh on each call -> edits apply without re-import."""
     with open(CONFIG_PATH) as f:
         return yaml.safe_load(f) or {}
 
@@ -34,6 +38,30 @@ def load_config() -> dict[str, Any]:
 logger = logging.getLogger(__name__)
 
 
+class Direction(Enum):
+    """
+    Direction in which the Item / resulting Slot should be rotated.
+
+    Orientation.VERTICAL will be None
+    """
+
+    # TODO --> return rotation(X,Y,Z) ?
+    UP = 'up'
+    DOWN = 'down'
+    LEFT = 'left'
+    RIGHT = 'right'
+
+
+class Orientation(Enum):
+    """
+    Orientation of the Item / resulting profile of the Slot.
+    """
+    # TODO --> holds Direction?
+    VERTICAL = 'vertical'
+    HORIZONTAL = 'horizontal'
+
+
+# TODO --> rename SlotShape
 class Shape(Enum):
     """
     Slot cross-section.
@@ -42,6 +70,8 @@ class Shape(Enum):
         --> currently only rotates towards +Y
     --> ROUND_VERT: cylinder w/ circular faces parallel to Z-axis (short socket standing upright)
     """
+    # TODO --> horz/vert should be combined once Item/Orientation/Direction are implemented
+    # TODO --> IRREGULAR
 
     PRISM_HEXA = 'prism_hexa'
     PRISM_RECT = 'prism_rect'
@@ -61,6 +91,24 @@ class StorageBlockType(Enum):
     ROWED = 'rowed'
 
 
+class Item:
+
+    # TODO --> encapsulate the item whose dimensions are specified in the yaml
+    # TODO --> import stl??
+
+    shape: Shape
+    orientation: Orientation = Orientation.VERTICAL
+    direction: Direction = None
+
+
+# TODO --> every class above this to item.py ??
+
+
+class Scoop:
+    # TODO
+    pass
+
+
 @dataclass
 class Slot:
     """Slot
@@ -70,6 +118,11 @@ class Slot:
     --> All measurements in mm unless otherwise stated.
     --> From a top-down view of the work surface, X is left/right and Y is up/down.
     """
+    # TODO SLOT REFACTOR
+        # --> slot methodology should be entirely shape independent
+        # --> no length/width/diameter, everything in terms of x/y/z
+        # --> transformations like diameter -> depth should happen in Item w/ Orientation+Direction
+
     # TODO --> validation (rectangle can't have length/width 0, etc)
     # TODO --> center option for x/y. calc box_len / slot_len and offset for spacing
 
@@ -79,6 +132,10 @@ class Slot:
     label: str = ''
     # TODO --> default to None
     shape: Shape = Shape.ROUND_VERT
+    # None = unset, filled from the slot's Row or StorageBlock (see add_slot / add_row)
+    scoops: bool | None = None
+    # same as scoops; still None once built means labels are drawn
+    labels: bool | None = None
     diameter: float = 0.0
     depth: float = 0.0
     font_size: float = 6.0
@@ -116,6 +173,23 @@ class Slot:
         else:
             raise ValueError('[!] invalid slot shape: {}'.format(self.shape))
 
+    def build_scoops(self) -> None:
+        # TODO --> set scoop params in config.yaml
+        Cylinder(
+            self.scaled_radius * 1.6,
+            18.0,
+            rotation=(90, 0, 0),
+            align=(Align.CENTER, Align.CENTER),
+            mode=self.built_mode
+        )
+        rim = edges(Select.LAST).group_by(Axis.Z)[-1]
+        fillet(rim, radius=2.0)
+
+    @property
+    def draws_label(self) -> bool:
+        """Whether a label is drawn: labels isn't False and there's label text."""
+        return self.labels is not False and bool(self.label)
+
     def build_label(self) -> None:
         """
         Build an embossed label. By default, labels are placed below their slots with font size
@@ -133,6 +207,12 @@ class Slot:
         logging.debug('[!] BUILDING LABEL [!]')
         logging.debug('|    label: {}'.format(self.label))
         logging.debug('|   coords: x={}, y={}'.format(*coords))
+        logging.debug('-'*25)
+
+    def log_scoop_creation(self, coords: tuple) -> None:
+        logging.debug('-'*25)
+        logging.debug('[!] BUILDING SCOOP [!]')
+        logging.debug('|   coords: x={}, y={}, z={}'.format(*coords))
         logging.debug('-'*25)
 
     def log_slot_creation(self, coords: tuple) -> None:
@@ -205,6 +285,8 @@ class Slot:
         return self.scaled_depth * .5
 
 
+# TODO --> features class for common features between storage/row/slot: scoops, labels, etc
+
 @dataclass
 class Row:
     """Row
@@ -215,7 +297,9 @@ class Row:
 
     debug: bool = False
     font_size: float = 6.0
+    labels: bool | None = None
     name: str = ''
+    scoops: bool | None = None
     slots: DoublyLinkedList[Slot] = field(default_factory=DoublyLinkedList)
     width: float = 0.0
     _y: float = 0.0
@@ -223,6 +307,10 @@ class Row:
     def add_slot(self, slot: Slot) -> Slot:
         slot.font_size = self.font_size
         slot.debug = self.debug
+        if slot.scoops is None:
+            slot.scoops = self.scoops
+        if slot.labels is None:
+            slot.labels = self.labels
         self.slots.append(slot)
         return slot
 
@@ -243,9 +331,16 @@ class Row:
         return 0.0
 
     @property
+    def has_labels(self) -> bool:
+        """Whether any slot in the row draws a label."""
+        return any(slot.draws_label for slot in self.slots)
+
+    @property
     def height(self) -> float:
-        """Total row height based on the max diameter + font size."""
-        return self.max_y_height + self.font_size + self.font_spacing
+        """Total row height based on the max diameter, + font size if any slot draws a label."""
+        if self.has_labels:
+            return self.max_y_height + self.font_size + self.font_spacing
+        return self.max_y_height
 
     @property
     def max_y_height(self) -> float:
@@ -298,6 +393,12 @@ class Row:
         """
         return self.y - self.font_size
 
+    @property
+    def y_scoop(self) -> float:
+        """Y-position of slot scoops."""
+        # scoop depth hardcoded to 18.0 for the moment
+        return self.y + ((self.max_y_height + 9.0) / 2)
+
     def __iter__(self) -> Iterator[Slot]:
         return iter(self.slots)
 
@@ -317,8 +418,8 @@ class StorageBlock:
     slot level in the .yaml config. Rows are irrelevant for this configuration.
 
     Dimensions are primarily intended to fit the gridfinity standard (https://gridfinity.xyz/)
-    using gridfinity units (GFU), but if a plain box is desired, dimensions can optionally be
-    specified in mm (use the --arrange option in generate.py to omit the gridfinity base.)
+    using gridfinity units (GFU), but dimensions can also be given in mm and built as given. If X/Y
+    aren't whole GFU, a plain box is built instead of the gridfinity base (see is_gridfinity.)
 
     GFU grid (X/Y) specifications are 42mm per unit (not including tolerances.)
     GFU height (Z) specification is 7mm per unit (not including tolerances.)
@@ -327,9 +428,14 @@ class StorageBlock:
         name (str, optional): storage block name. Defaults to inputted YAML filename.
         type (StorageBlockType): slot layout, rowed (default) or positional.
         font_size (float): default label font size for every row/slot.
-        x (int): storage block dimensions along the X-axis in GFU.
-        y (int): storage block dimensions along the Y-axis in GFU.
+        scoops (bool, optional): default for rows/slots that don't set their own.
+        labels (bool, optional): same as scoops; labels are drawn if nothing sets it.
+        x (float): storage block dimensions along the X-axis in GFU.
+        y (float): storage block dimensions along the Y-axis in GFU.
         z (float): storage block height in GFU.
+        round_to_gfu_x/y/z (bool): round that dimension up to a whole number of GFU. Otherwise
+            it's built as given (a gridfinity base needs whole X/Y; see is_gridfinity.)
+        round_to_gfu_all (bool): sets all three round_to_gfu_* options.
     """
 
     # TODO --> auto allocate slots given # rows
@@ -339,20 +445,40 @@ class StorageBlock:
     name: str = ''
     type: StorageBlockType = StorageBlockType.ROWED
     font_size: float = 6.0
+    scoops: bool | None = None
+    labels: bool | None = None
     rows: DoublyLinkedList[Row] = field(default_factory=DoublyLinkedList)
-    x: int = 0
-    y: int = 0
+    x: float = 0.0
+    y: float = 0.0
     z: float = 0.0
+    round_to_gfu_x: bool = False
+    round_to_gfu_y: bool = False
+    round_to_gfu_z: bool = False
+    round_to_gfu_all: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.type, StorageBlockType):
             self.type = StorageBlockType(self.type)
+        if self.round_to_gfu_all:
+            self.round_to_gfu_x = self.round_to_gfu_y = self.round_to_gfu_z = True
+        for axis in ('x', 'y', 'z'):
+            if getattr(self, 'round_to_gfu_' + axis):
+                # round() first so float error (e.g. 84 / 42 = 2.0000000001) doesn't add a unit
+                setattr(self, axis, math.ceil(round(getattr(self, axis), 6)))
 
     def add_row(self, row: Row) -> Row:
         logger.debug('add_row(): {} slots'.format(len(row)))
         row.debug = self.debug
+        if row.scoops is None:
+            row.scoops = self.scoops
+        if row.labels is None:
+            row.labels = self.labels
         for slot in row.slots:
             slot.debug = self.debug
+            if slot.scoops is None:
+                slot.scoops = row.scoops
+            if slot.labels is None:
+                slot.labels = row.labels
         self.rows.append(row)
         return row
 
@@ -377,7 +503,7 @@ class StorageBlock:
     def build_slots(self, labels: bool=True, top_face=None):
         """
         Iterate through all slots of all rows and build their specified shapes (and optional
-        labels.)
+        labels.) labels=False skips every label (e.g. positional, which doesn't support them yet.)
         """
         if self.debug:
             self.build_row_markers()
@@ -393,7 +519,7 @@ class StorageBlock:
                 with Locations(coords):
                     slot.build_shape()
 
-                if labels and slot.label:
+                if labels and slot.draws_label:
                     # generate label
                     label_coords = (
                         round(slot.x, 3),
@@ -404,6 +530,16 @@ class StorageBlock:
                         with Locations(label_coords):
                             slot.build_label()
                     extrude(label.sketch, amount=1.0)
+
+                if slot.scoops:
+                    scoop_coords = (
+                        round(slot.x, 3),
+                        round(row.y_scoop, 3),
+                        round(self.z_mm, 3)
+                    )
+                    slot.log_scoop_creation(scoop_coords)
+                    with Locations(scoop_coords):
+                        slot.build_scoops()
 
     def build_test_surface(self, part) -> None:
         """
@@ -498,12 +634,17 @@ class StorageBlock:
         return ht
 
     @property
-    def x_gfu(self) -> int:
+    def is_gridfinity(self) -> bool:
+        """Whether X/Y are whole GFU, which a gridfinity base needs."""
+        return float(self.x).is_integer() and float(self.y).is_integer()
+
+    @property
+    def x_gfu(self) -> float:
         """Number of gridfinity units along the X axis."""
         return self.x
 
     @property
-    def y_gfu(self) -> int:
+    def y_gfu(self) -> float:
         """Number of gridfinity units along the Y axis."""
         return self.y
 
@@ -513,14 +654,14 @@ class StorageBlock:
         return self.z
 
     @property
-    def x_mm(self) -> int:
+    def x_mm(self) -> float:
         """Width in mm (GFU_GRID spec is 42mm.)"""
-        return self.x * GFU_GRID
+        return round(self.x * GFU_GRID, 3)
 
     @property
-    def y_mm(self) -> int:
+    def y_mm(self) -> float:
         """Length in mm (GFU_GRID spec is 42mm.)"""
-        return self.y * GFU_GRID
+        return round(self.y * GFU_GRID, 3)
 
     @property
     def z_mm(self) -> float:
@@ -544,27 +685,31 @@ class StorageBlock:
         return len(self.rows)
 
 
-STORAGE_BLOCK_KEYS = ('name', 'type', 'font_size', 'x', 'y', 'z', 'x_mm', 'y_mm', 'z_mm', 'global')
+ROUND_KEYS = ('round_to_gfu_x', 'round_to_gfu_y', 'round_to_gfu_z', 'round_to_gfu_all')
+STORAGE_BLOCK_KEYS = (
+    'name', 'type', 'font_size', 'x', 'y', 'z', 'x_mm', 'y_mm', 'z_mm', 'global', *ROUND_KEYS
+)
 
 
-def _gfu_from_config(data: dict[str, Any], axis: str, unit_mm: float, whole: bool) -> float | None:
+def _gfu_from_config(
+        data: dict[str, Any],
+        axis: str,
+        nominal_mm: float,
+        built_mm: float,
+        round_up: bool
+    ) -> float | None:
     """ Read one storage block dimension in GFU, given as either '<axis>' (GFU) or '<axis>_mm'.
 
-    --> mm values are converted using the nominal unit size, and rounded up to whole units if
-        whole is set (gridfinity X/Y must be whole units).
+    --> If round_up, mm values convert using the nominal unit size (StorageBlock rounds them up.)
+    --> Otherwise they convert using the built unit size, so <axis>_mm is drawn exactly as given.
     --> Returns None if the dimension isn't given."""
 
     gfu, mm = data.get(axis), data.get(axis + '_mm')
     if gfu is not None and mm is not None:
         raise ValueError('[!] storage_block: give {0} or {0}_mm, not both'.format(axis))
     if mm is not None:
-        gfu = mm / unit_mm
-        if whole:
-            # round() first so float error (e.g. 84 / 42 = 2.0000000001) doesn't add a unit
-            gfu = math.ceil(round(gfu, 6))
+        gfu = mm / (nominal_mm if round_up else built_mm)
         logger.info('storage_block: {}_mm={} -> {}={}'.format(axis, mm, axis, gfu))
-    if gfu is not None and whole and not float(gfu).is_integer():
-        raise ValueError('[!] storage_block: {} must be a whole number of units, got {}'.format(axis, gfu))
     return gfu
 
 
@@ -575,7 +720,8 @@ def load_storage_block(
         x: int | None = None,
         y: int | None = None,
         z: float | None = None,
-        debug: bool = False
+        debug: bool = False,
+        labels: bool | None = None
     ) -> StorageBlock:
     """ Build a StorageBlock (and its Rows) from a parsed YAML config.
 
@@ -583,20 +729,34 @@ def load_storage_block(
         'type' ('rowed' or 'positional', default rowed), 'font_size' (default label size for
         every row/slot), each dimension as either GFU ('x', 'y', 'z') or mm ('x_mm', 'y_mm',
         'z_mm'), and 'global' (defaults for every slot, see load_rows).
-    --> X/Y given in mm are rounded up to whole units; Z may be fractional.
+    --> 'round_to_gfu_x'/'_y'/'_z' round that dimension up to whole units ('round_to_gfu_all' sets
+        all three); unrounded dimensions are built exactly as given.
     --> name/block_type/x/y/z arguments (e.g. from the CLI) override the YAML values.
     --> debug is passed down to every Row and Slot.
+    --> labels (e.g. False from --no-labels) overrides the 'global' labels value; rows/slots that
+        set their own still win.
     --> Missing dimensions are left at 0."""
 
     block_data = data.get('storage_block', {})
+    if labels is not None:
+        # override 'global' so load_rows applies it to slots too
+        block_data = {**block_data, 'global': {**block_data.get('global', {}), 'labels': labels}}
+        data = {**data, 'storage_block': block_data}
     unknown = set(block_data) - set(STORAGE_BLOCK_KEYS)
     if unknown:
         raise ValueError('[!] storage_block: unknown key(s): {}'.format(', '.join(sorted(unknown))))
 
+    rounding = {key: bool(block_data.get(key, False)) for key in ROUND_KEYS}
+    round_all = rounding['round_to_gfu_all']
     dims = {
-        'x': _gfu_from_config(block_data, 'x', GFU_GRID_NOMINAL, whole=True),
-        'y': _gfu_from_config(block_data, 'y', GFU_GRID_NOMINAL, whole=True),
-        'z': _gfu_from_config(block_data, 'z', GFU_HEIGHT, whole=False),
+        axis: _gfu_from_config(
+            block_data, axis, nominal, built, round_all or rounding['round_to_gfu_' + axis]
+        )
+        for axis, nominal, built in (
+            ('x', GFU_GRID_NOMINAL, GFU_GRID),
+            ('y', GFU_GRID_NOMINAL, GFU_GRID),
+            ('z', GFU_HEIGHT, GFU_HEIGHT)
+        )
     }
     for axis, override in (('x', x), ('y', y), ('z', z)):
         if override is not None:
@@ -607,9 +767,12 @@ def load_storage_block(
         name=name or block_data.get('name', ''),
         type=block_type or block_data.get('type', StorageBlockType.ROWED),
         font_size=block_data.get('font_size', StorageBlock.font_size),
-        x=int(dims['x'] or 0),
-        y=int(dims['y'] or 0),
-        z=float(dims['z'] or 0.0)
+        scoops=block_data.get('global', {}).get('scoops'),
+        labels=block_data.get('global', {}).get('labels'),
+        x=float(dims['x'] or 0.0),
+        y=float(dims['y'] or 0.0),
+        z=float(dims['z'] or 0.0),
+        **rounding
     )
     for row in load_rows(data, font_size=block.font_size):
         block.add_row(row)
@@ -623,14 +786,16 @@ def load_storage_block_from_path(
         x: int | None = None,
         y: int | None = None,
         z: float | None = None,
-        debug: bool = False
+        debug: bool = False,
+        labels: bool | None = None
     ) -> StorageBlock:
     """Build a StorageBlock from a YAML file. The name defaults to the filename if not set in the
     YAML."""
     logger.info('loading storage block from {}'.format(path))
     with open(path) as f:
         block = load_storage_block(
-            yaml.safe_load(f), name=name, block_type=block_type, x=x, y=y, z=z, debug=debug
+            yaml.safe_load(f), name=name, block_type=block_type, x=x, y=y, z=z, debug=debug,
+            labels=labels
         )
     if not block.name:
         block.name = os.path.splitext(os.path.basename(path))[0]
@@ -661,6 +826,8 @@ def load_rows(data: dict[str, Any], font_size: float = 6.0) -> list[Row]:
         rows.append(Row(
             font_size=max((slot.font_size for slot in slots), default=defaults['font_size']),
             name=row_data.get('name', ''),
+            scoops=row_defaults.get('scoops', defaults.get('scoops')),
+            labels=row_defaults.get('labels', defaults.get('labels')),
             slots=DoublyLinkedList(slots)
         ))
     return rows

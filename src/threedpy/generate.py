@@ -83,6 +83,19 @@ def labeled_bin(x: int, y: int, z: int, txt: str):
         return gf_bin
 
 
+def build_work_surface(block: StorageBlock, arrange: bool = False) -> None:
+    """ Build the block's body: a gridfinity box, or a plain box if arranging or X/Y aren't whole
+    GFU (gridfinity bases only come in whole units.)"""
+    if not arrange and block.is_gridfinity:
+        build_gf_box(int(block.x_gfu), int(block.y_gfu), block.z_gfu)
+        return
+    if not arrange:
+        logging.warning('x/y ({} x {} GFU) not whole units: building a plain box, no gridfinity base'
+                        .format(block.x_gfu, block.y_gfu))
+    with Locations((0,0,0)):
+        block.build_test_surface(rowed_storage_block)
+
+
 def positional_storage_block(block: StorageBlock, arrange: bool=False):
     """ Generate a gridfinity box with manually-specified positions for each slot.
 
@@ -95,16 +108,11 @@ def positional_storage_block(block: StorageBlock, arrange: bool=False):
     block.log_storage_block_creation()
 
     with BuildPart() as part:
-        # establish work surface
-        if not arrange:
-            gf_box = build_gf_box(block.x_gfu, block.y_gfu, block.z_gfu)
-        else:
-            with Locations((0,0,0)):
-                block.build_test_surface(rowed_storage_block)
+        build_work_surface(block, arrange=arrange)
 
         # TODO --> test meh
         top_face = part.faces().sort_by(Axis.Z)[-1]
-        block.build_slots(labels=None, top_face=top_face)
+        block.build_slots(labels=False, top_face=top_face)
 
     return part
 
@@ -112,7 +120,6 @@ def positional_storage_block(block: StorageBlock, arrange: bool=False):
 def rowed_storage_block(
         block: StorageBlock,
         arrange: bool = False,
-        labels: bool = True,
         y_row_offset: float = 0.0
     ):
     """ Generate a gridfinity socket (etc) storage block with equally spaced rows of slots and
@@ -120,7 +127,7 @@ def rowed_storage_block(
 
     --> arrange: for fine-tuning arrangement of the slots. skips time-expensive call to build
         gridfinity base.
-    --> labels: whether to emboss slots' labels. defaults to below (-Y) slot.
+    --> labels: embossed below (-Y) each slot unless its labels setting is False.
     """
 
     if (block.x_gfu == 0 or block.y_gfu == 0 or block.z_gfu == 0):
@@ -129,12 +136,7 @@ def rowed_storage_block(
     block.log_storage_block_creation()
 
     with BuildPart() as part:
-        # establish work surface
-        if not arrange:
-            gf_box = build_gf_box(block.x_gfu, block.y_gfu, block.z_gfu)
-        else:
-            with Locations((0,0,0)):
-                block.build_test_surface(rowed_storage_block)
+        build_work_surface(block, arrange=arrange)
 
         # determine each row's Y-position
         block.y_align_rows()
@@ -144,19 +146,19 @@ def rowed_storage_block(
 
         # face of working surface on which label text will (optionally) be drawn + extruded
         top_face = part.faces().sort_by(Axis.Z)[-1]
-        block.build_slots(labels=labels, top_face=top_face)
+        block.build_slots(top_face=top_face)
 
     return part
 
 
-def generate_storage_block(block: StorageBlock, arrange: bool = False, labels: bool = True):
+def generate_storage_block(block: StorageBlock, arrange: bool = False):
     """ Generate a storage block using the layout given by its type.
 
     --> labels: only applies to rowed storage blocks (positional doesn't support labels yet.)
     """
     if block.type == StorageBlockType.POSITIONAL:
         return positional_storage_block(block, arrange=arrange)
-    return rowed_storage_block(block, arrange=arrange, labels=labels)
+    return rowed_storage_block(block, arrange=arrange)
 
 
 def scale_test(
@@ -224,7 +226,8 @@ def storage_block_from_args(args: argparse.Namespace) -> StorageBlock:
         x=args.x,
         y=args.y,
         z=args.z,
-        debug=args.debug
+        debug=args.debug,
+        labels=False if args.no_labels else None
     )
     missing = [axis for axis in ('x', 'y', 'z') if not getattr(block, axis)]
     if missing:
@@ -274,7 +277,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     build.add_argument(
         '--no-labels',
         action='store_true',
-        help='skip embossed slot labels (rowed only)'
+        help='skip embossed slot labels, except rows/slots that set labels: true (rowed only)'
     )
 
     scale = subparsers.add_parser('scale-test', help='test fitments for a diameter at several scales')
@@ -308,7 +311,7 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     block = storage_block_from_args(args)
-    part = generate_storage_block(block, arrange=args.arrange, labels=not args.no_labels)
+    part = generate_storage_block(block, arrange=args.arrange)
 
     if not args.no_show:
         show(part, **SHOW_KWARGS)
