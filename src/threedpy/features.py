@@ -167,10 +167,10 @@ class Scoop:
     def log_scoop_creation(self, coords: tuple) -> None:
         logging.debug('-'*25)
         logging.debug('[!] BUILDING SCOOP [!]')
-        logging.debug('|   coords: x={}, y={}, z={}'.format(*coords))
-        logging.debug('|   flat_w: {}'.format(self.flat_width))
-        logging.debug('|   wall_w: {}'.format(self.wall_width))
-        logging.debug('|   length: {}'.format(self.length))
+        logging.debug('|   coords: x={}, y={}, z={}'.format(*(round(c, 3) for c in coords)))
+        logging.debug('|   flat_w: {}'.format(round(self.flat_width, 3)))
+        logging.debug('|   wall_w: {}'.format(round(self.wall_width, 3)))
+        logging.debug('|   length: {}'.format(round(self.length, 3)))
         logging.debug('-'*25)
 
     @classmethod
@@ -222,7 +222,7 @@ class Label:
         logging.debug('-'*25)
         logging.debug('[!] BUILDING LABEL [!]')
         logging.debug('|    label: {}'.format(self.label_text))
-        logging.debug('|   coords: x={}, y={}'.format(*coords))
+        logging.debug('|   coords: x={}, y={}'.format(*(round(c, 3) for c in coords)))
         logging.debug('-'*25)
 
     @property
@@ -328,10 +328,10 @@ class Slot:
         logging.debug('[!] BUILDING SLOT [!]')
         logging.debug('|    label: {}'.format(self.label))
         logging.debug('|    shape: {}'.format(self.shape))
-        logging.debug('|   slot_z: {}'.format(self.z))
-        logging.debug('|   coords: x={}, y={}, z={}'.format(*coords))
-        logging.debug('| diameter: {}'.format(self.scaled_diameter))
-        logging.debug('|    depth: {}'.format(self.scaled_depth))
+        logging.debug('|   slot_z: {}'.format(round(self.z, 3)))
+        logging.debug('|   coords: x={}, y={}, z={}'.format(*(round(c, 3) for c in coords)))
+        logging.debug('| diameter: {}'.format(round(self.scaled_diameter, 3)))
+        logging.debug('|    depth: {}'.format(round(self.scaled_depth, 3)))
         logging.debug('|     mode: {}'.format(self.built_mode))
         logging.debug('| rotation: {}'.format(self.built_rotation))
         logging.debug('-'*25)
@@ -362,15 +362,15 @@ class Slot:
 
     @property
     def scaled_depth(self) -> float:
-        return round(self.depth * self.scale, 2)
+        return self.depth * self.scale
 
     @property
     def scaled_diameter(self) -> float:
-        return round(self.diameter * self.scale, 2)
+        return self.diameter * self.scale
 
     @property
     def scaled_radius(self) -> float:
-        return round(self.scaled_diameter / 2, 2)
+        return self.scaled_diameter / 2
 
     @property
     def y_built_height(self) -> float:

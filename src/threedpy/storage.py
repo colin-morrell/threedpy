@@ -329,9 +329,9 @@ class StorageBlock:
             for slot in row.slots:
                 # generate slot
                 coords = (
-                    round(slot.x, 3),
-                    round(slot.y, 3),
-                    round(surface_z - slot.z, 3)
+                    slot.x,
+                    slot.y,
+                    surface_z - slot.z
                 )
                 slot.log_slot_creation(coords)
                 with Locations(coords):
@@ -340,8 +340,8 @@ class StorageBlock:
                 if labels and slot.draws_label:
                     # generate label
                     label_coords = (
-                        round(slot.x, 3),
-                        round(row.y_label, 3)
+                        slot.x,
+                        row.y_label
                     )
                     slot.label.log_label_creation(label_coords)
                     with BuildSketch(top_face) as label:
@@ -353,9 +353,9 @@ class StorageBlock:
                 if slot.scoops and not row.full_scoop:
                     # generate any individual slot scoops
                     scoop_coords = (
-                        round(slot.x, 3),
-                        round(row.y_scoop, 3),
-                        round(surface_z, 3)
+                        slot.x,
+                        row.y_scoop,
+                        surface_z
                     )
                     with Locations(scoop_coords):
                         slot.built_scoop().log_scoop_creation(scoop_coords)
@@ -365,11 +365,13 @@ class StorageBlock:
                 # generate any whole-row scoops
                 scoop = row.built_scoop()
                 scoop_coords = (
-                    round(row.x_scoop, 3),
-                    round(row.y_scoop, 3),
-                    round(surface_z, 3)
+                    row.x_scoop,
+                    row.y_scoop,
+                    surface_z
                 )
-                logger.debug('building full-row scoop {} at {}'.format(scoop, scoop_coords))
+                logger.debug('building full-row scoop {} at {}'.format(
+                    scoop, tuple(round(c, 3) for c in scoop_coords)
+                ))
                 with Locations(scoop_coords):
                     scoop.build(Mode.ADD if self.debug else Mode.SUBTRACT)
 
@@ -393,12 +395,12 @@ class StorageBlock:
         logging.debug('|          x_gfu: {}'.format(self.x_gfu))
         logging.debug('|          y_gfu: {}'.format(self.y_gfu))
         logging.debug('|          z_gfu: {}'.format(self.z_gfu))
-        logging.debug('|           x_mm: {}'.format(self.x_mm))
-        logging.debug('|           y_mm: {}'.format(self.y_mm))
-        logging.debug('|           z_mm: {}'.format(self.z_mm))
-        logging.debug('|    rows_height: {}'.format(self.rows_height))
-        logging.debug('| y_margin_total: {}'.format(self.y_margin_total))
-        logging.debug('|  y_row_spacing: {}'.format(self.y_row_spacing))
+        logging.debug('|           x_mm: {}'.format(round(self.x_mm, 3)))
+        logging.debug('|           y_mm: {}'.format(round(self.y_mm, 3)))
+        logging.debug('|           z_mm: {}'.format(round(self.z_mm, 3)))
+        logging.debug('|    rows_height: {}'.format(round(self.rows_height, 3)))
+        logging.debug('| y_margin_total: {}'.format(round(self.y_margin_total, 3)))
+        logging.debug('|  y_row_spacing: {}'.format(round(self.y_row_spacing, 3)))
         logging.debug('-'*25)
 
     def slots(self) -> Iterator[Slot]:
@@ -477,27 +479,27 @@ class StorageBlock:
     @property
     def x_mm(self) -> float:
         """Width in mm (GFU_GRID spec is 42mm.)"""
-        return round(self.x * GFU_GRID, 3)
+        return self.x * GFU_GRID
 
     @property
     def y_mm(self) -> float:
         """Length in mm (GFU_GRID spec is 42mm.)"""
-        return round(self.y * GFU_GRID, 3)
+        return self.y * GFU_GRID
 
     @property
     def z_mm(self) -> float:
         """Height in mm (GFU_HEIGHT spec is 7mm.)"""
-        return round(self.z * GFU_HEIGHT, 3)
+        return self.z * GFU_HEIGHT
 
     @property
     def y_margin_total(self) -> float:
         """Total space between rows + top/bottom edges."""
-        return round(self.y_mm - self.rows_height, 2)
+        return self.y_mm - self.rows_height
 
     @property
     def y_row_spacing(self) -> float:
         """Amount of space between each row + top/bottom edges."""
-        return round(self.y_margin_total / (self.num_rows + 1), 2)
+        return self.y_margin_total / (self.num_rows + 1)
 
     def __iter__(self) -> Iterator[Row]:
         return iter(self.rows)
