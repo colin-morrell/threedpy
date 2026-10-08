@@ -115,7 +115,7 @@ def positional_storage_block(block: StorageBlock, arrange: bool=False):
 
         # TODO --> test meh
         top_face = part.faces().sort_by(Axis.Z)[-1]
-        block.build_slots(labels=False, top_face=top_face)
+        block.build(labels=False, top_face=top_face)
 
     return part
 
@@ -149,7 +149,7 @@ def rowed_storage_block(
 
         # face of working surface on which label text will (optionally) be drawn + extruded
         top_face = part.faces().sort_by(Axis.Z)[-1]
-        block.build_slots(top_face=top_face)
+        block.build(top_face=top_face)
 
     return part
 

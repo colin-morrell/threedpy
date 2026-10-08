@@ -314,66 +314,77 @@ class StorageBlock:
             with Locations(coords):
                 row.build_row_marker(self.x_mm)
 
-    def build_slots(self, labels: bool=True, top_face=None):
-        """
-        Iterate through all slots of all rows and build their specified shapes (and optional
-        labels.) labels=False skips every label (e.g. positional, which doesn't support them yet.)
+    def build_label(self, top_face, row: Row, slot: Slot) -> None:
+        # generate label
+        label_coords = (
+            slot.x,
+            row.y_label
+        )
+        slot.label.log_label_creation(label_coords)
+        with BuildSketch(top_face) as label:
+            with Locations(label_coords):
+                slot.label.build()
+        extrude(label.sketch, amount=1.0)
 
-        --> Slots and scoops are placed relative to top_face's height when given. z_mm assumes the
-            body starts at Z=0, but a gridfinity base extends below it (its top is 2.5mm lower).
+    def build_row_scoop(self, row: Row, surface_z: float) -> None:
+        """Generate a Scoop across an entire Row."""
+        scoop = row.built_scoop()
+        scoop_coords = (
+            row.x_scoop,
+            row.y_scoop,
+            surface_z
+        )
+        logger.debug('building full-row scoop {} at {}'.format(
+            scoop, tuple(round(c, 3) for c in scoop_coords)
+        ))
+        with Locations(scoop_coords):
+            scoop.build(Mode.ADD if self.debug else Mode.SUBTRACT)
+
+    def build_slot_scoop(self, row: Row, slot: Slot, surface_z: float) -> None:
+        """Generate a Scoop for a single slot."""
+        scoop_coords = (
+            slot.x,
+            row.y_scoop,
+            surface_z
+        )
+        with Locations(scoop_coords):
+            slot.built_scoop().log_scoop_creation(scoop_coords)
+            slot.built_scoop().build(slot.built_mode)
+
+    def build_slot(self, slot: Slot, surface_z: float) -> None:
+        """Generate a single slot."""
+        coords = (
+            slot.x,
+            slot.y,
+            surface_z - slot.z
+        )
+        slot.log_slot_creation(coords)
+        with Locations(coords):
+            slot.build()
+
+    def build(self, labels: bool=True, top_face=None):
+        """
+        Iterate through all slots of all rows and build their specified shapes and features.
+
+        Slots and scoops are placed relative to top_face's height when given. z_mm assumes the
+        body starts at Z=0, but a gridfinity base extends below it (its top is 2.5mm lower).
         """
         surface_z = top_face.center().Z if top_face is not None else self.z_mm
         if self.debug:
             self.build_row_markers(surface_z)
         for row in self.rows:
             for slot in row.slots:
-                # generate slot
-                coords = (
-                    slot.x,
-                    slot.y,
-                    surface_z - slot.z
-                )
-                slot.log_slot_creation(coords)
-                with Locations(coords):
-                    slot.build()
+                self.build_slot(slot, surface_z)
 
                 if labels and slot.draws_label:
-                    # generate label
-                    label_coords = (
-                        slot.x,
-                        row.y_label
-                    )
-                    slot.label.log_label_creation(label_coords)
-                    with BuildSketch(top_face) as label:
-                        with Locations(label_coords):
-                            slot.label.build()
-                    extrude(label.sketch, amount=1.0)
+                    self.build_label(top_face, row, slot)
 
-                # a full-row scoop replaces the row's slot scoops (overlapping cuts break fillets)
+                # row scoops render slot scoops redundant
                 if slot.scoops and not row.full_scoop:
-                    # generate any individual slot scoops
-                    scoop_coords = (
-                        slot.x,
-                        row.y_scoop,
-                        surface_z
-                    )
-                    with Locations(scoop_coords):
-                        slot.built_scoop().log_scoop_creation(scoop_coords)
-                        slot.built_scoop().build(slot.built_mode)
+                    self.build_slot_scoop()
 
             if row.full_scoop and len(row):
-                # generate any whole-row scoops
-                scoop = row.built_scoop()
-                scoop_coords = (
-                    row.x_scoop,
-                    row.y_scoop,
-                    surface_z
-                )
-                logger.debug('building full-row scoop {} at {}'.format(
-                    scoop, tuple(round(c, 3) for c in scoop_coords)
-                ))
-                with Locations(scoop_coords):
-                    scoop.build(Mode.ADD if self.debug else Mode.SUBTRACT)
+                self.build_row_scoop(row, surface_z)
 
     def build_test_surface(self, part) -> None:
         """
@@ -401,7 +412,6 @@ class StorageBlock:
         logging.debug('|    rows_height: {}'.format(round(self.rows_height, 3)))
         logging.debug('| y_margin_total: {}'.format(round(self.y_margin_total, 3)))
         logging.debug('|  y_row_spacing: {}'.format(round(self.y_row_spacing, 3)))
-        logging.debug('-'*25)
 
     def slots(self) -> Iterator[Slot]:
         """All slots across every row, in row order."""

@@ -65,7 +65,7 @@ class Shape(Enum):
 SCOOP_FLAT_WIDTH: float = 10.0
 SCOOP_WALL_WIDTH: float = 7.5
 # default scoop length along Y
-SCOOP_LENGTH: float = 18.0
+SCOOP_LENGTH: float = 20.0
 # rounds the rim where a scoop meets the top surface; 0 = sharp
 SCOOP_FILLET_RADIUS: float = 2.5
 
@@ -171,7 +171,6 @@ class Scoop:
         logging.debug('|   flat_w: {}'.format(round(self.flat_width, 3)))
         logging.debug('|   wall_w: {}'.format(round(self.wall_width, 3)))
         logging.debug('|   length: {}'.format(round(self.length, 3)))
-        logging.debug('-'*25)
 
     @classmethod
     def resolve(cls, spec: 'Scoop | dict | None', default: 'Scoop') -> 'Scoop':
@@ -223,7 +222,6 @@ class Label:
         logging.debug('[!] BUILDING LABEL [!]')
         logging.debug('|    label: {}'.format(self.label_text))
         logging.debug('|   coords: x={}, y={}'.format(*(round(c, 3) for c in coords)))
-        logging.debug('-'*25)
 
     @property
     def is_empty(self) -> bool:
@@ -334,7 +332,6 @@ class Slot:
         logging.debug('|    depth: {}'.format(round(self.scaled_depth, 3)))
         logging.debug('|     mode: {}'.format(self.built_mode))
         logging.debug('| rotation: {}'.format(self.built_rotation))
-        logging.debug('-'*25)
 
     @property
     def built_align(self):
@@ -362,11 +359,13 @@ class Slot:
 
     @property
     def scaled_depth(self) -> float:
-        return self.depth * self.scale
+        #return self.depth * self.scale
+        return self.depth + 0.5
 
     @property
     def scaled_diameter(self) -> float:
-        return self.diameter * self.scale
+        #return self.diameter * self.scale
+        return self.diameter + 0.5
 
     @property
     def scaled_radius(self) -> float:
