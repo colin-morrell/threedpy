@@ -37,7 +37,8 @@ from threedpy.features import (
     Scoop,
     Shape,
     Slot,
-    SCOOP_LENGTH
+    SCOOP_LENGTH,
+    SCOOP_WALL_WIDTH
 )
 from threedpy.util import DoublyLinkedList
 
@@ -81,7 +82,7 @@ class Row:
     name: str = ''
     scoops: bool | None = None
     # one scoop across the whole row: True (sized from its slots, see default_scoop), a mapping
-    # overriding those dimensions, or a Scoop
+    # overriding those dimensions, or a Scoop. Replaces the row's slot scoops.
     full_scoop: bool | dict | Scoop = False
     slots: DoublyLinkedList[Slot] = field(default_factory=DoublyLinkedList)
     width: float = 0.0
@@ -188,7 +189,7 @@ class Row:
         """Scoop across the row: flat bottom spanning its slots' X extent, walls and depth from
         its largest slot radius."""
         radius = max((slot.scaled_radius for slot in self.slots), default=0.0)
-        return Scoop(flat_width=self.x_scoop_span, wall_width=radius, depth=radius)
+        return Scoop(flat_width=self.x_scoop_span, wall_width=SCOOP_WALL_WIDTH, depth=radius)
 
     @property
     def x_scoop(self) -> float:
@@ -206,7 +207,8 @@ class Row:
     @property
     def y_scoop(self) -> float:
         """Y-position of scoops."""
-        return self.y + ((self.max_y_height + SCOOP_LENGTH / 2) / 2)
+        #return self.y + ((self.max_y_height + SCOOP_LENGTH / 2) / 2)
+        return self.y
 
     def __iter__(self) -> Iterator[Slot]:
         return iter(self.slots)
@@ -298,13 +300,16 @@ class StorageBlock:
         """
         return self.add_row(Row(name=name, slots=DoublyLinkedList(slots)))
 
-    def build_row_markers(self) -> None:
-        """Draw 1mm (Y) x 1mm (Z) box along each row's Y position for debugging."""
+    def build_row_markers(self, surface_z: float | None = None) -> None:
+        """Draw 1mm (Y) x 1mm (Z) box along each row's Y position for debugging, on top of the
+        surface at surface_z (default z_mm)."""
+        if surface_z is None:
+            surface_z = self.z_mm
         for row in self.rows:
             coords = (
                 0,
                 row.y,
-                self.z_mm
+                surface_z
             )
             with Locations(coords):
                 row.build_row_marker(self.x_mm)
@@ -313,16 +318,20 @@ class StorageBlock:
         """
         Iterate through all slots of all rows and build their specified shapes (and optional
         labels.) labels=False skips every label (e.g. positional, which doesn't support them yet.)
+
+        --> Slots and scoops are placed relative to top_face's height when given. z_mm assumes the
+            body starts at Z=0, but a gridfinity base extends below it (its top is 2.5mm lower).
         """
+        surface_z = top_face.center().Z if top_face is not None else self.z_mm
         if self.debug:
-            self.build_row_markers()
+            self.build_row_markers(surface_z)
         for row in self.rows:
             for slot in row.slots:
                 # generate slot
                 coords = (
                     round(slot.x, 3),
                     round(slot.y, 3),
-                    round(self.z_mm - slot.z, 3)
+                    round(surface_z - slot.z, 3)
                 )
                 slot.log_slot_creation(coords)
                 with Locations(coords):
@@ -340,12 +349,13 @@ class StorageBlock:
                             slot.label.build()
                     extrude(label.sketch, amount=1.0)
 
-                if slot.scoops:
+                # a full-row scoop replaces the row's slot scoops (overlapping cuts break fillets)
+                if slot.scoops and not row.full_scoop:
                     # generate any individual slot scoops
                     scoop_coords = (
                         round(slot.x, 3),
                         round(row.y_scoop, 3),
-                        round(self.z_mm, 3)
+                        round(surface_z, 3)
                     )
                     with Locations(scoop_coords):
                         slot.built_scoop().log_scoop_creation(scoop_coords)
@@ -357,7 +367,7 @@ class StorageBlock:
                 scoop_coords = (
                     round(row.x_scoop, 3),
                     round(row.y_scoop, 3),
-                    round(self.z_mm, 3)
+                    round(surface_z, 3)
                 )
                 logger.debug('building full-row scoop {} at {}'.format(scoop, scoop_coords))
                 with Locations(scoop_coords):

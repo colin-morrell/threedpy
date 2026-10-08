@@ -9,6 +9,7 @@ from typing import Any
 import yaml
 from build123d import (
     Align,
+    Axis,
     BasePartObject,
     Bezier,
     Box,
@@ -16,12 +17,16 @@ from build123d import (
     BuildPart,
     BuildSketch,
     Cylinder,
+    GeomType,
     Line,
     Locations,
     Mode,
     Plane,
+    Select,
     Text,
+    edges,
     extrude,
+    fillet,
     make_face,
     mirror
 )
@@ -56,8 +61,13 @@ class Shape(Enum):
     ROUND_VERT = 'round_vert'
 
 
+# defaults along X
+SCOOP_FLAT_WIDTH: float = 10.0
+SCOOP_WALL_WIDTH: float = 7.5
 # default scoop length along Y
 SCOOP_LENGTH: float = 18.0
+# rounds the rim where a scoop meets the top surface; 0 = sharp
+SCOOP_FILLET_RADIUS: float = 2.5
 
 
 @dataclass
@@ -68,27 +78,28 @@ class Scoop:
     along Y. Built with its rim at Z=0 and its floor at -depth, centered on X and Y.
 
     Args:
-        flat_length (float): X-axis dimension: length of the flat bottom.
-        wall_length (float): X-axis dimension: horizontal run of each parabolic wall.
+        flat_width (float): X-axis dimension: length of the flat bottom.
+        wall_width (float): X-axis dimension: horizontal run of each parabolic wall.
         depth (float): Z-axis dimension: how far the scoop extends below the surface.
         width (float): Y-axis dimension.
     """
 
-    flat_length: float = 5.0
-    wall_length: float = 5.0
-    depth: float = 6.0
-    width: float = SCOOP_LENGTH
+    flat_width: float = SCOOP_FLAT_WIDTH
+    wall_width: float = SCOOP_WALL_WIDTH
+    depth: float = None
+    length: float = SCOOP_LENGTH
+    fillet_radius: float = SCOOP_FILLET_RADIUS
 
     @property
-    def length(self) -> float:
+    def width(self) -> float:
         """Total length (X) at the rim."""
-        return self.flat_length + 2 * self.wall_length
+        return self.flat_width + 2 * self.wall_width
 
     def build(self, mode: Mode = Mode.SUBTRACT) -> BasePartObject:
         """Build the scoop at the current location(s)."""
-        half_flat = self.flat_length / 2
+        half_flat = self.flat_width / 2
         floor = -self.depth
-        rim = (-half_flat - self.wall_length, 0)
+        rim = (-half_flat - self.wall_width, 0)
         with BuildPart() as part:
             # XZ plane so the profile stands upright (sketch Y -> world Z) and extrudes along Y
             with BuildSketch(Plane.XZ):
@@ -98,18 +109,68 @@ class Scoop:
                         Line((0, floor), (-half_flat, floor))
                     # a quadratic Bezier is an exact parabola; from the vertex, the middle
                     # control point is where the end tangents meet: halfway along the wall
-                    Bezier((-half_flat, floor), (-half_flat - self.wall_length / 2, floor), rim)
+                    Bezier((-half_flat, floor), (-half_flat - self.wall_width / 2, floor), rim)
                     Line(rim, (0, 0))
                     Line((0, 0), (0, floor))
                 make_face()
                 mirror(about=Plane.YZ)
             extrude(amount=self.length / 2, both=True)
-        return BasePartObject(part.part, mode=mode)
+        scoop = BasePartObject(part.part, mode=mode)
+        # only a cut has a rim (debug mode adds the scoop as a solid)
+        if mode == Mode.SUBTRACT and self.fillet_radius > 0:
+            self.fillet_rim(scoop)
+        return scoop
+
+    def fillet_rim(self, scoop: BasePartObject) -> None:
+        """Round the edges where the just-cut scoop meets the top surface.
+
+        --> First tries only the edges inside the scoop's footprint, so neighboring edges the cut
+            trimmed (e.g. an overlapping slot's opening) stay sharp.
+        --> That fails when the rim runs into another opening, since the fillet can't stop there;
+            then the whole topmost edge group is rounded, including those neighboring edges.
+        --> If both fail (e.g. radius too large for the geometry), the rim is left sharp.
+        --> Skipped (rim left sharp) when the rim isn't at the surface or has BSPLINE edges, both
+            of which can crash OCCT outright rather than raise."""
+        bb = scoop.bounding_box()
+        tolerance = 1e-3
+
+        def in_footprint(edge) -> bool:
+            e = edge.bounding_box()
+            return (
+                e.min.X >= bb.min.X - tolerance and e.max.X <= bb.max.X + tolerance
+                and e.min.Y >= bb.min.Y - tolerance and e.max.Y <= bb.max.Y + tolerance
+            )
+
+        top = edges(Select.LAST).group_by(Axis.Z)[-1]
+        # a rim off the surface leaves curved wall/surface intersections, which can crash OCCT
+        if abs(top[0].center().Z - bb.max.Z) > tolerance:
+            logging.warning(
+                'scoop rim (z={:.2f}) is not at the top surface (z={:.2f}); not filleting'
+                .format(bb.max.Z, top[0].center().Z)
+            )
+            return
+        # a fresh rim on a flat surface is lines (+ arcs at round openings); BSPLINEs are leftovers
+        # of an overlapping scoop's fillet, e.g. neighboring slot scoops
+        if any(e.geom_type == GeomType.BSPLINE for e in top):
+            logging.warning('scoop rim overlaps another scoop\'s fillet; not filleting')
+            return
+        for rim in (top.filter_by(in_footprint), top):
+            try:
+                fillet(rim, radius=self.fillet_radius)
+                return
+            except ValueError:
+                continue
+        logging.warning(
+            'scoop rim fillet (radius {}) failed, leaving it sharp'.format(self.fillet_radius)
+        )
 
     def log_scoop_creation(self, coords: tuple) -> None:
         logging.debug('-'*25)
         logging.debug('[!] BUILDING SCOOP [!]')
         logging.debug('|   coords: x={}, y={}, z={}'.format(*coords))
+        logging.debug('|   flat_w: {}'.format(self.flat_width))
+        logging.debug('|   wall_w: {}'.format(self.wall_width))
+        logging.debug('|   length: {}'.format(self.length))
         logging.debug('-'*25)
 
     @classmethod
@@ -252,8 +313,8 @@ class Slot:
         """Scoop sized from the slot: flat bottom as wide as the slot, each wall half its width,
         as deep as its radius."""
         return Scoop(
-            flat_length=self.scaled_diameter,
-            wall_length=self.scaled_radius,
+            flat_width=self.scaled_diameter,
+            wall_width=SCOOP_WALL_WIDTH,
             depth=self.scaled_radius
         )
 
