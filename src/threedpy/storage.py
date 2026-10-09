@@ -72,28 +72,6 @@ class Row:
     def __post_init__(self) -> None:
         Scoop.check_keys(self.full_scoop, f"row '{self.name}'")
 
-    def add_slot(self, slot: Slot) -> Slot:
-        slot.font_size = self.font_size
-        if slot.label is not None:
-            slot.label.font_size = self.font_size
-        slot.debug = self.debug
-        if slot.scoops is None:
-            slot.scoops = self.scoops
-        if slot.labels is None:
-            slot.labels = self.labels
-        self.slots.append(slot)
-        return slot
-
-    def build_row_marker(self, width: float) -> None:
-        """Draw 1mm (Y) x 1mm (Z) box along the row's Y position."""
-        Box(
-            width,
-            1,
-            1,
-            align=(Align.CENTER, Align.CENTER),
-            mode=Mode.ADD
-        )
-
     @property
     def font_spacing(self) -> float:
         """Distance between bottom of slot and top of label."""
@@ -109,29 +87,32 @@ class Row:
     def height(self) -> float:
         """Total row height based on the max diameter, + font size if any slot draws a label."""
         if self.has_labels:
-            return self.max_y_height + self.font_size + self.font_spacing
-        return self.max_y_height
-
-    @property
-    def max_y_height(self) -> float:
-        """Largest y-height slot within the row."""
-        return max((slot.y_built_height for slot in self.slots), default=0.0)
+            return self.y_max_slot + self.font_size + self.font_spacing
+        return self.y_max_slot
 
     @property
     def max_radius(self) -> float:
         # TODO --> rename this probably
         """Largest radius slot within the row."""
-        return (self.max_y_height / 2)
+        return (self.y_max_slot / 2)
 
     @property
-    def min_y_height(self) -> float:
-        """Smallest y-height slot within the row."""
-        return min((slot.y_built_height for slot in self.slots), default=0.0)
-
-    @property
-    def total_diameter(self) -> float:
+    def x_footprint(self) -> float:
         """Cumulative diameter of slots within the row. Used for width (X) spacing."""
-        return sum(slot.scaled_diameter for slot in self.slots)
+        return sum(slot.x_footprint for slot in self.slots)
+
+    @property
+    def x_scoop(self) -> float:
+        """X-position (center) of the row's slots, for a full-row scoop."""
+        left = min(slot.x - slot.scaled_radius for slot in self.slots)
+        return left + self.x_scoop_span / 2
+
+    @property
+    def x_scoop_span(self) -> float:
+        """X distance from the first slot's left edge to the last slot's right edge."""
+        left = min(slot.x - slot.scaled_radius for slot in self.slots)
+        right = max(slot.x + slot.scaled_radius for slot in self.slots)
+        return right - left
 
     @property
     def x_slot_spacing(self) -> float:
@@ -142,7 +123,8 @@ class Row:
 
     @property
     def x_total_spacing(self) -> float:
-        return self.width - self.total_diameter
+        """Total margins (free space between slots.)"""
+        return self.width - self.x_footprint
 
     @property
     def y(self) -> float:
@@ -154,21 +136,69 @@ class Row:
         self._y = val
 
     @property
-    def y_label(self) -> float:
-        """ Y-position of slot labels.
+    def y_footprint(self) -> float:
+        y_max_slot = self.y_max_slot
+        if self.has_labels:
+            y_max_slot += self.font_size + self.font_spacing
+        return y_max_slot
 
-        --> Offset downward (-Y) by font_size to sit below their respective slot.
-        """
+    @property
+    def y_label(self) -> float:
+        """Y-position of slot labels. Offset -Y to sit below their respective slot."""
+        # offset by the largest radius slot so the labels are aligned with each other
         return self.y - self.max_radius - (self.font_size / 2) - self.font_spacing
 
+    @property
+    def y_max_slot(self) -> float:
+        """Largest slot Y-value within the row."""
+        return max((slot.y_footprint for slot in self.slots), default=0.0)
+
+    @property
+    def y_min_slot(self) -> float:
+        """Smallest slot Y-value within the row."""
+        return min((slot.y_footprint for slot in self.slots), default=0.0)
+
+    @property
+    def y_scoop(self) -> float:
+        """Y-position of scoops. Default: centered on row."""
+        return self.y
+
+    @property
+    def z_max(self) -> float:
+        # TODO --> max depth for vert slots
+        # TODO --> max radius for horz slots
+        # TODO --> will require slots to dynamically know their Z
+        pass
+
+    def add_slot(self, slot: Slot) -> Slot:
+        slot.font_size = self.font_size
+        if slot.label is not None:
+            slot.label.font_size = self.font_size
+        slot.debug = self.debug
+        if slot.scoops is None:
+            slot.scoops = self.scoops
+        if slot.labels is None:
+            slot.labels = self.labels
+        self.slots.append(slot)
+        return slot
+
+    def build_row_marker(self, width: float) -> None:
+        """Draw 1x1 (YxZ) box at the surface along the entire X-width of the row's Y position."""
+        Box(
+            width,
+            1,
+            1,
+            align=(Align.CENTER, Align.CENTER),
+            mode=Mode.ADD
+        )
+
     def built_scoop(self, x_block_width: float) -> Scoop:
-        """The full-row scoop to draw (see full_scoop.)"""
+        """The full-row scoop to be drawn."""
         spec = None if self.full_scoop is True else self.full_scoop
         return Scoop.resolve(spec, self.default_scoop(x_block_width))
 
     def default_scoop(self, x_block_width: float) -> Scoop:
-        """Scoop across the row: flat bottom spanning its slots' X extent, walls and depth from
-        its largest slot radius."""
+        """Single-row scoop across its slots' X-footprint, depth of its largest slot radius."""
 
         radius = max((slot.scaled_radius for slot in self.slots), default=0.0)
         # extend the scoop walls all the way to the edges (w/ .5 margin) on X-axis
@@ -185,34 +215,8 @@ class Row:
             flat_width=self.x_scoop_span,
             wall_width=scoop_wall_width,
             depth=radius,
-            length=self.max_y_height/2
+            length=self.y_max_slot/2
         )
-
-    @property
-    def x_scoop(self) -> float:
-        """X-position (center) of the row's slots, for a full-row scoop."""
-        left = min(slot.x - slot.scaled_radius for slot in self.slots)
-        return left + self.x_scoop_span / 2
-
-    @property
-    def x_scoop_span(self) -> float:
-        """X distance from the first slot's left edge to the last slot's right edge."""
-        left = min(slot.x - slot.scaled_radius for slot in self.slots)
-        right = max(slot.x + slot.scaled_radius for slot in self.slots)
-        return right - left
-
-    @property
-    def y_scoop(self) -> float:
-        """Y-position of scoops."""
-        #return self.y + ((self.max_y_height + SCOOP_LENGTH / 2) / 2)
-        return self.y
-
-    @property
-    def z_max(self) -> float:
-        # TODO --> max depth for vert slots
-        # TODO --> max radius for horz slots
-        # TODO --> will require slots to dynamically know their Z
-        pass
 
     def __iter__(self) -> Iterator[Slot]:
         return iter(self.slots)
@@ -281,6 +285,73 @@ class StorageBlock:
                 # round() first so float error (e.g. 84 / 42 = 2.0000000001) doesn't add a unit
                 setattr(self, axis, math.ceil(round(getattr(self, axis), 6)))
 
+    @property
+    def num_rows(self) -> int:
+        return len(self)
+
+    @property
+    def rows_height(self) -> float:
+        """Combined height of every row (based on each row's largest diameter slot)."""
+        ht = 0.0
+        for row in self.rows:
+            ht += row.height
+        return ht
+
+    @property
+    def is_gridfinity(self) -> bool:
+        """Whether X/Y are whole GFU, which a gridfinity base needs."""
+        return float(self.x).is_integer() and float(self.y).is_integer()
+
+    @property
+    def x_gfu(self) -> float:
+        """Number of gridfinity units along the X axis."""
+        return self.x
+
+    @property
+    def x_mm(self) -> float:
+        """Width in mm (GFU_GRID spec is 42mm.)"""
+        return self.x * GFU_GRID
+
+    @property
+    def x_max_footprint(self) -> float:
+        """Largest row's X-footprint."""
+        return max(row.x_footprint for row in self.rows)
+
+    @property
+    def y_gfu(self) -> float:
+        """Number of gridfinity units along the Y axis."""
+        return self.y
+
+    @property
+    def y_mm(self) -> float:
+        """Length in mm (GFU_GRID spec is 42mm.)"""
+        return self.y * GFU_GRID
+
+    @property
+    def y_footprint(self) -> float:
+        """Combined Y footprint of all rows."""
+        return sum(row.y_footprint for row in self.rows)
+
+    @property
+    def y_margin_total(self) -> float:
+        """Total space between rows + top/bottom edges."""
+        return self.y_mm - self.y_footprint
+
+    @property
+    def y_row_spacing(self) -> float:
+        """Amount of space between each row + top/bottom edges."""
+        return self.y_margin_total / (self.num_rows + 1)
+
+    @property
+    def z_gfu(self) -> float:
+        """Number of gridfinity height units along the Z axis."""
+        return self.z
+
+    @property
+    def z_mm(self) -> float:
+        """Height in mm (GFU_HEIGHT spec is 7mm.)"""
+        return self.z * GFU_HEIGHT
+
     def add_row(self, row: Row) -> Row:
         logger.debug(f'add_row(): {len(row)} slots')
         row.debug = self.debug
@@ -298,15 +369,11 @@ class StorageBlock:
         return row
 
     def add_slots(self, slots: Iterable[Slot], name: str = '') -> Row:
-        """
-        Add slots (e.g. from load_slots) as a new row. With no existing
-        rows this becomes the first row; otherwise it is appended after them.
-        """
+        """Append slots directly as a new row."""
         return self.add_row(Row(name=name, slots=DoublyLinkedList(slots)))
 
     def build_row_markers(self, surface_z: float | None = None) -> None:
-        """Draw 1mm (Y) x 1mm (Z) box along each row's Y position for debugging, on top of the
-        surface at surface_z (default z_mm)."""
+        """Draw 1x1 (YxZ) box at the surface along the entire X-width of each row's Y position."""
         if surface_z is None:
             surface_z = self.z_mm
         for row in self.rows:
@@ -337,7 +404,8 @@ class StorageBlock:
             row.y_scoop,
             surface_z
         )
-        logger.debug(f'building full-row scoop {scoop} at {tuple(round(c, 3) for c in scoop_coords)}')
+        l = f'building full-row scoop {scoop} at {tuple(round(c, 3) for c in scoop_coords)}'
+        logger.debug(l)
         with Locations(scoop_coords):
             scoop.build(Mode.ADD if self.debug else Mode.SUBTRACT)
 
@@ -364,12 +432,12 @@ class StorageBlock:
             slot.build()
 
     def build(self, labels: bool=True, top_face=None):
-        """
-        Iterate through all slots of all rows and build their specified shapes and features.
+        """Iterate through all slots of all rows and build their specified shapes and features.
 
         Slots and scoops are placed relative to top_face's height when given. z_mm assumes the
         body starts at Z=0, but a gridfinity base extends below it (its top is 2.5mm lower).
         """
+        self.validate()
         surface_z = top_face.center().Z if top_face is not None else self.z_mm
         if self.debug:
             self.build_row_markers(surface_z)
@@ -388,9 +456,9 @@ class StorageBlock:
                 self.build_row_scoop(row, surface_z)
 
     def build_test_surface(self, part) -> None:
-        """
-        Build mock storage block surface without expensive gf generation call. Useful for faster
-        testing/fine-tuning row/slot arrangement.
+        """Build mock storage block surface without expensive gf generation call.
+
+        Useful for faster testing/fine-tuning row/slot arrangement.
         """
         Box(
             self.x_mm,
@@ -419,98 +487,51 @@ class StorageBlock:
         for row in self.rows:
             yield from row
 
+    def validate(self) -> None:
+        self.validate_x_bounds()
+        self.validate_y_bounds()
+        logger.info('[+] SurfaceBlock X/Y validation passed.')
+
+    def validate_x_bounds(self) -> None:
+        """Validate all Row's slots do not exceed the StorageBlock's width on the X-axis."""
+        # TODO --> automatically account for scoop/no scoop
+        # TODO --> assume a reasonable margin so slots don't overlap
+        if self.x_max_footprint > self.x_mm:
+            e = f'Y-BOUNDS: footprint {self.x.max_footprint} exceeds block width {self.x_mm}'
+            raise ValueError(e)
+        l = f'[+] SurfaceBlock X validation passed: {self.x_max_footprint} < {self.x_mm}'
+        logger.debug(l)
+
+    def validate_y_bounds(self) -> None:
+        """Validate the Row's slots do not exceed the StorageBlock's height on the Y-axis."""
+        # TODO --> assume a reasonable margin so slots don't overlap
+        if self.y_footprint > self.y_mm:
+            e = f'Y-BOUNDS: footprint {self.y_footprint} exceeds block height {self.y_mm}'
+            raise ValueError(e)
+        l = f'[+] SurfaceBlock Y validation passed: {self.y_footprint} < {self.y_mm}'
+        logger.debug(l)
+
     def x_align_slots(self) -> None:
-        """X-align each slot, leaving even spacing (per row) between slots + left/right edges.
-
-        --> First slot initially aligns with left edge (min X, or (0-(x_mm*.5), since 0 is center.)
-        --> Other slots initially align with the rightward edge of the previous slot.
-
-        --> All slots then offset rightward (+X) by their row's x_slot_spacing
-            + their own radius."""
-
+        """X-align slots from L/-X to R/+X with even spacing (per row) between slots + L/R edges."""
         for row in self.rows:
+            cursor = -self.x_mm / 2
             row.width = self.x_mm
-            for slot in row.slots.nodes():
-                if not slot.prev:
-                    slot.value.x = 0 - (self.x_mm / 2)
-                else:
-                    slot.value.x = slot.prev.value.x
-                    slot.value.x += slot.prev.value.scaled_radius
-                slot.value.x += row.x_slot_spacing
-                slot.value.x += slot.value.scaled_radius
+            for slot in row.slots:
+                cursor += row.x_slot_spacing
+                cursor += slot.x_footprint
+                # slots are drawn from center: offset -X by half its X-footprint
+                slot.x = cursor - (slot.x_footprint / 2)
 
     def y_align_rows(self) -> None:
-        """Y-align each row, leaving even spacing between rows + top/bottom edges.
-
-        This Y-value will be the center of the row.
-        --> no labels: slots are centered directly on the row
-        --> labels: the slot/label combined are centered on the row
-        """
+        """Y-align rows from top/+Y to bottom/-Y with even spacing between rows + top/bottom edges."""
         cursor = self.y_mm / 2
         for row in self.rows:
             cursor -= self.y_row_spacing
-            # row.y is the middle of the row's slots; any label space sits below them
-            row.y = cursor - row.max_y_height / 2
+            # center row based on its largest slot Y-footprint
+            row.y = cursor - row.y_max_slot / 2
             for slot in row.slots:
                 slot.y = row.y
             cursor -= row.height
-
-    @property
-    def num_rows(self) -> int:
-        return len(self)
-
-    @property
-    def rows_height(self) -> float:
-        """Combined height of every row (based on each row's largest diameter slot)."""
-        ht = 0.0
-        for row in self.rows:
-            ht += row.height
-        return ht
-
-    @property
-    def is_gridfinity(self) -> bool:
-        """Whether X/Y are whole GFU, which a gridfinity base needs."""
-        return float(self.x).is_integer() and float(self.y).is_integer()
-
-    @property
-    def x_gfu(self) -> float:
-        """Number of gridfinity units along the X axis."""
-        return self.x
-
-    @property
-    def y_gfu(self) -> float:
-        """Number of gridfinity units along the Y axis."""
-        return self.y
-
-    @property
-    def z_gfu(self) -> float:
-        """Number of gridfinity height units along the Z axis."""
-        return self.z
-
-    @property
-    def x_mm(self) -> float:
-        """Width in mm (GFU_GRID spec is 42mm.)"""
-        return self.x * GFU_GRID
-
-    @property
-    def y_mm(self) -> float:
-        """Length in mm (GFU_GRID spec is 42mm.)"""
-        return self.y * GFU_GRID
-
-    @property
-    def z_mm(self) -> float:
-        """Height in mm (GFU_HEIGHT spec is 7mm.)"""
-        return self.z * GFU_HEIGHT
-
-    @property
-    def y_margin_total(self) -> float:
-        """Total space between rows + top/bottom edges."""
-        return self.y_mm - self.rows_height
-
-    @property
-    def y_row_spacing(self) -> float:
-        """Amount of space between each row + top/bottom edges."""
-        return self.y_margin_total / (self.num_rows + 1)
 
     def __iter__(self) -> Iterator[Row]:
         return iter(self.rows)

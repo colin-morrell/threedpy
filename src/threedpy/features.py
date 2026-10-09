@@ -83,7 +83,7 @@ class Scoop:
 
     @property
     def width(self) -> float:
-        """Total length (X) at the rim."""
+        """Total width on the X-axis at the rim (usually the block surface.)"""
         return self.flat_width + 2 * self.wall_width
 
     def build(self, mode: Mode = Mode.SUBTRACT) -> BasePartObject:
@@ -259,6 +259,70 @@ class Slot:
             self.shape = Shape(self.shape)
         Scoop.check_keys(self.scoop, f"slot '{self.label}'")
 
+    @property
+    def draws_label(self) -> bool:
+        """Whether a label is drawn: labels isn't False and there's label text."""
+        return self.labels is not False and self.label is not None and bool(self.label.label_text)
+
+    @property
+    def built_align(self):
+        # also center along socket's length so slot.y is its middle
+        if self.shape == Shape.ROUND_HORZ:
+            return (Align.CENTER, Align.CENTER, Align.CENTER)
+        return (Align.CENTER, Align.CENTER)
+
+    @property
+    def built_mode(self):
+        if not self.debug:
+            return Mode.SUBTRACT
+        return Mode.ADD
+
+    @property
+    def built_rotation(self) -> int:
+        if self.shape == Shape.ROUND_HORZ:
+            return (90, 0, 0)
+        return (0, 0, 0)
+
+    @property
+    def scaled_depth(self) -> float:
+        return self.depth + SLOT_DEPTH_CLEARANCE
+
+    @property
+    def scaled_diameter(self) -> float:
+        return self.diameter + SLOT_DIAMETER_CLEARANCE
+
+    @property
+    def scaled_radius(self) -> float:
+        return self.scaled_diameter / 2
+
+    @property
+    def x_footprint(self):
+        """Profile of slot along the X-axis."""
+        return self.scaled_diameter
+
+    @property
+    def y_footprint(self) -> float:
+        """The slot's dimensions on the Y-axis depend on its orientation"""
+        if self.shape == Shape.ROUND_HORZ:
+            return self.scaled_depth
+        return self.scaled_diameter
+
+    @property
+    def z(self) -> float:
+        """
+        How far to offset the slot below (-Z) work surface's top face.
+
+        --> ROUND_VERT offset by their depth.
+        --> ROUND_HORZ offset by z_offset or half their scaled depth if not specified.
+        """
+        if self.shape == Shape.ROUND_HORZ:
+            # default 0.0 --> slot will cut -Z by half its diameter
+            return self.z_offset
+        if not self.debug:
+            return self.scaled_depth
+        # places slots above surface for debugging
+        return self.scaled_depth * .5
+
     def build(self) -> None:
         """Build the slot's shape using build123d."""
         if self.shape in (Shape.ROUND_VERT, Shape.ROUND_HORZ):
@@ -287,19 +351,12 @@ class Slot:
         return Scoop.resolve(self.scoop, self.default_scoop())
 
     def default_scoop(self) -> Scoop:
-        """Scoop sized from the slot: flat bottom as wide as the slot, each wall half its width,
-        as deep as its radius."""
+        """Single-slot scoop: flat bottom width of slot, as deep as its radius."""
         return Scoop(
             flat_width=self.scaled_diameter,
             wall_width=SCOOP_WALL_WIDTH,
             depth=self.scaled_radius
         )
-
-    @property
-    def draws_label(self) -> bool:
-        """Whether a label is drawn: labels isn't False and there's label text."""
-        return self.labels is not False and self.label is not None and bool(self.label.label_text)
-
     def log_slot_creation(self, coords: tuple) -> None:
         logger.debug('-'*25)
         logger.debug('[!] BUILDING SLOT [!]')
@@ -311,68 +368,5 @@ class Slot:
         logger.debug(f'|    depth: {round(self.scaled_depth, 3)}')
         logger.debug(f'|     mode: {self.built_mode}')
         logger.debug(f'| rotation: {self.built_rotation}')
-
-    @property
-    def built_align(self):
-        # also center along socket's length so slot.y is its middle
-        if self.shape == Shape.ROUND_HORZ:
-            return (Align.CENTER, Align.CENTER, Align.CENTER)
-        return (Align.CENTER, Align.CENTER)
-
-    @property
-    def built_mode(self):
-        if not self.debug:
-            return Mode.SUBTRACT
-        return Mode.ADD
-
-    @property
-    def built_radius(self):
-        """Profile of slot along the X-axis."""
-        return self.scaled_diameter / 2
-
-    @property
-    def built_rotation(self) -> int:
-        if self.shape == Shape.ROUND_HORZ:
-            return (90, 0, 0)
-        return (0, 0, 0)
-
-    @property
-    def scaled_depth(self) -> float:
-        return self.depth + SLOT_DEPTH_CLEARANCE
-
-    @property
-    def scaled_diameter(self) -> float:
-        return self.diameter + SLOT_DIAMETER_CLEARANCE
-
-    @property
-    def scaled_radius(self) -> float:
-        return self.scaled_diameter / 2
-
-    @property
-    def y_built_height(self) -> float:
-        """
-        The slot's dimensions on the Y-axis depend on its orientation:
-        --> ROUND_HORZ --> Y corresponds to depth
-        --> ROUND_VERT --> Y corresponds to diameter
-        """
-        if self.shape == Shape.ROUND_HORZ:
-            return self.scaled_depth
-        return self.scaled_diameter
-
-    @property
-    def z(self) -> float:
-        """
-        How far to offset the slot below (-Z) work surface's top face.
-
-        --> ROUND_VERT offset by their depth.
-        --> ROUND_HORZ offset by z_offset or half their scaled depth if not specified.
-        """
-        if self.shape == Shape.ROUND_HORZ:
-            # with default 0.0 --> slot will cut -Z by half its diameter
-            return self.z_offset
-        if not self.debug:
-            return self.scaled_depth
-        # places slots above surface for debugging
-        return self.scaled_depth * .5
 
 
