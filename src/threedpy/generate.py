@@ -23,7 +23,7 @@ from gridfinity_build123d import (
     Bin
 )
 from gridfinity_build123d.constants import gridfinity_standard
-from threedpy.constants import FONT_PATH, GFU_GRID, GFU_HEIGHT
+from threedpy.constants import FONT_PATH, GFU_GRID, GFU_HEIGHT, PREVIEW_GAP
 from threedpy.features import (
     Shape,
     Slot
@@ -226,12 +226,11 @@ def scale_test(
     return None
 
 
-def storage_block_from_args(args: argparse.Namespace) -> StorageBlock:
-    """Build a StorageBlock from the input YAML, with any name/type/x/y/z given on the command
+def storage_block_from_args(args: argparse.Namespace, in_path: str) -> StorageBlock:
+    """Build a StorageBlock from the input YAML, with any type/x/y/z given on the command
     line overriding the YAML's 'storage_block' settings."""
     block = load_storage_block_from_path(
-        args.in_path,
-        name=args.name,
+        in_path,
         block_type=args.type,
         x=args.x,
         y=args.y,
@@ -242,8 +241,37 @@ def storage_block_from_args(args: argparse.Namespace) -> StorageBlock:
     missing = [axis for axis in ('x', 'y', 'z') if not getattr(block, axis)]
     if missing:
         sys.exit('[!] {}: no {} dimension(s) in the YAML "storage_block" mapping or on the command line'
-                 .format(args.in_path, '/'.join(missing)))
+                 .format(in_path, '/'.join(missing)))
     return block
+
+
+def block_names(in_paths: list[str]) -> list[str]:
+    """yacv object and STL names: each input's file name minus its extension."""
+    names = [os.path.splitext(os.path.basename(path))[0] for path in in_paths]
+    duplicates = sorted({name for name in names if names.count(name) > 1})
+    if duplicates:
+        # yacv would replace one with the other, and their STLs would overwrite each other
+        sys.exit('[!] input files share a name: {}'.format(', '.join(duplicates)))
+    return names
+
+
+def show_in_column(parts: list, names: list[str]) -> None:
+    """Show the parts in a column along Y (first in front) in one call, so auto_clear
+    (default) removes everything shown earlier."""
+    shown, y = [], 0.0
+    for part in parts:
+        bb = part.part.bounding_box()
+        # moved copies for the preview; exports stay at the origin
+        shown.append(part.part.moved(Location((0, y - bb.min.Y, 0))))
+        y += bb.size.Y + PREVIEW_GAP
+    show(*shown, names=names, **SHOW_KWARGS)
+
+
+def export_parts(parts: list, names: list[str], out_dir: str) -> None:
+    """Export each part to <out_dir>/<name>.stl."""
+    os.makedirs(out_dir, exist_ok=True)
+    for part, name in zip(parts, names):
+        export_as_stl(part, os.path.abspath(os.path.join(out_dir, name + '.stl')))
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -254,7 +282,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         'build',
         help='storage block laid out by its YAML config (rowed or positional)'
     )
-    build.add_argument('in_path', metavar='PATH', help='path to slot/row YAML file')
+    build.add_argument(
+        'in_paths', nargs='+', metavar='PATH',
+        help='slot/row YAML file(s); several are built and shown in a column'
+    )
     build.add_argument(
         '-t', '--type',
         choices=[block_type.value for block_type in StorageBlockType],
@@ -265,13 +296,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     build.add_argument('-z', type=float, help='height in gridfinity units (overrides YAML)')
     build.add_argument(
         '-o', '--out',
-        dest='out_path',
-        metavar='PATH',
-        help='STL export path (not exported if omitted)'
-    )
-    build.add_argument(
-        '-n', '--name',
-        help='storage block name (overrides YAML; default: input filename)'
+        action='store_true',
+        help="export each block to config.yaml's out_dir as <yaml file name>.stl"
     )
     build.add_argument(
         '--arrange',
@@ -320,13 +346,17 @@ def main(argv: list[str] | None = None) -> None:
         scale_test(args.diameter, args.depth, args.out_path, args.scales, preview=not args.no_show)
         return
 
-    block = storage_block_from_args(args)
-    part = generate_storage_block(block, arrange=args.arrange)
+    names = block_names(args.in_paths)
+    blocks = [storage_block_from_args(args, path) for path in args.in_paths]
+    parts = [generate_storage_block(block, arrange=args.arrange) for block in blocks]
 
     if not args.no_show:
-        show(part, **SHOW_KWARGS)
-    if args.out_path:
-        export_as_stl(part, args.out_path)
+        show_in_column(parts, names)
+    if args.out:
+        out_dir = CONFIG.get('out_dir')
+        if not out_dir:
+            sys.exit('[!] -o needs out_dir set in config.yaml')
+        export_parts(parts, names, out_dir)
 
 # %%
 
