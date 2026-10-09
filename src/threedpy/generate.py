@@ -154,7 +154,7 @@ def storage_block_from_args(args: argparse.Namespace, in_path: str) -> StorageBl
         x=args.x,
         y=args.y,
         z=args.z,
-        debug=args.debug,
+        debug=args.draw_solids,
         labels=False if args.no_labels else None
     )
     missing = [axis for axis in ('x', 'y', 'z') if not getattr(block, axis)]
@@ -225,10 +225,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     build.add_argument('--no-show', action='store_true', help='skip the yacv preview')
     build.add_argument(
-        '--debug',
+        '--draw-solids',
         action='store_true',
         help='draw slots as solids raised above the surface, plus row markers'
     )
+    build.add_argument('--debug', action='store_true', help='show DEBUG log messages')
     build.add_argument(
         '--no-labels',
         action='store_true',
@@ -257,8 +258,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def configure_logging(debug: bool) -> None:
+    """Show threedpy's INFO and above, plus DEBUG with --debug. Other libraries stay at WARNING."""
+    # CLI runs have no log handler yet; 3dipy's startup scripts already add one
+    if not logging.getLogger().handlers:
+        logging.basicConfig(level=logging.WARNING)
+    level = logging.DEBUG if debug else logging.INFO
+    # '__main__' is generate.py itself when run directly or with %run
+    for name in ('threedpy', '__main__'):
+        logging.getLogger(name).setLevel(level)
+
+
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
+    configure_logging(getattr(args, 'debug', False))
 
     """
     if args.command == 'scale-test':

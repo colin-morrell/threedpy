@@ -11,9 +11,6 @@ see our own debug logging.
 for name in ('yacv_server', 'build123d', 'asyncio'):
     logging.getLogger(name).setLevel(logging.WARNING)
 
-# print only DEBUG records, i.e. threedpy's own debug output
-logging.getLogger().handlers[0].addFilter(lambda record: record.levelno == logging.DEBUG)
-
 """
 Re-import threedpy and the test helpers that import it after any of their files change.
 
