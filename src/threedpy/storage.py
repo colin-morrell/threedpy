@@ -27,23 +27,24 @@ from build123d import (
 )
 
 from threedpy.constants import (
+    CONFIG_PATH,
     FONT_PATH,
     GFU_GRID,
     GFU_GRID_NOMINAL,
-    GFU_HEIGHT
+    GFU_HEIGHT,
+    ROUND_KEYS,
+    SCOOP_FILLET_RADIUS,
+    SCOOP_LENGTH,
+    SCOOP_WALL_WIDTH,
+    STORAGE_BLOCK_KEYS
 )
 from threedpy.features import (
     Label,
     Scoop,
     Shape,
-    Slot,
-    SCOOP_LENGTH,
-    SCOOP_WALL_WIDTH
+    Slot
 )
 from threedpy.util import DoublyLinkedList
-
-# repo root, two levels up from src/threedpy/
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'config.yaml')
 
 
 def load_config() -> dict[str, Any]:
@@ -53,7 +54,6 @@ def load_config() -> dict[str, Any]:
 
 
 logger = logging.getLogger(__name__)
-
 
 
 class StorageBlockType(Enum):
@@ -81,8 +81,6 @@ class Row:
     labels: bool | None = None
     name: str = ''
     scoops: bool | None = None
-    # one scoop across the whole row: True (sized from its slots, see default_scoop), a mapping
-    # overriding those dimensions, or a Scoop. Replaces the row's slot scoops.
     full_scoop: bool | dict | Scoop = False
     slots: DoublyLinkedList[Slot] = field(default_factory=DoublyLinkedList)
     width: float = 0.0
@@ -180,16 +178,32 @@ class Row:
         """
         return self.y - self.max_radius - (self.font_size / 2) - self.font_spacing
 
-    def built_scoop(self) -> Scoop:
+    def built_scoop(self, x_block_width: float) -> Scoop:
         """The full-row scoop to draw (see full_scoop.)"""
         spec = None if self.full_scoop is True else self.full_scoop
-        return Scoop.resolve(spec, self.default_scoop())
+        return Scoop.resolve(spec, self.default_scoop(x_block_width))
 
-    def default_scoop(self) -> Scoop:
+    def default_scoop(self, x_block_width: float) -> Scoop:
         """Scoop across the row: flat bottom spanning its slots' X extent, walls and depth from
         its largest slot radius."""
+
         radius = max((slot.scaled_radius for slot in self.slots), default=0.0)
-        return Scoop(flat_width=self.x_scoop_span, wall_width=SCOOP_WALL_WIDTH, depth=radius)
+        # extend the scoop walls all the way to the edges (w/ .5 margin) on X-axis
+        edge_margin = SCOOP_FILLET_RADIUS + 0.5
+        max_wall_width = (x_block_width - self.x_scoop_span) / 2 - edge_margin
+        # only take default width if it doesn't touch/exceed the edges
+        scoop_wall_width = min(max_wall_width, SCOOP_WALL_WIDTH)
+
+        logging.debug('[!] default_scoop(): x_block_width: {}'.format(x_block_width))
+        logging.debug('[!] default_scoop(): max_wall_width: {}'.format(max_wall_width))
+        logging.debug('[!] default_scoop(): scoop_wall_width: {}'.format(scoop_wall_width))
+
+        return Scoop(
+            flat_width=self.x_scoop_span,
+            wall_width=scoop_wall_width,
+            depth=radius,
+            length=self.max_y_height/2
+        )
 
     @property
     def x_scoop(self) -> float:
@@ -209,6 +223,13 @@ class Row:
         """Y-position of scoops."""
         #return self.y + ((self.max_y_height + SCOOP_LENGTH / 2) / 2)
         return self.y
+
+    @property
+    def z_max(self) -> float:
+        # TODO --> max depth for vert slots
+        # TODO --> max radius for horz slots
+        # TODO --> will require slots to dynamically know their Z
+        pass
 
     def __iter__(self) -> Iterator[Slot]:
         return iter(self.slots)
@@ -328,7 +349,7 @@ class StorageBlock:
 
     def build_row_scoop(self, row: Row, surface_z: float) -> None:
         """Generate a Scoop across an entire Row."""
-        scoop = row.built_scoop()
+        scoop = row.built_scoop(self.x_mm)
         scoop_coords = (
             row.x_scoop,
             row.y_scoop,
@@ -518,12 +539,6 @@ class StorageBlock:
         return len(self.rows)
 
 
-ROUND_KEYS = ('round_to_gfu_x', 'round_to_gfu_y', 'round_to_gfu_z', 'round_to_gfu_all')
-STORAGE_BLOCK_KEYS = (
-    'name', 'type', 'font_size', 'x', 'y', 'z', 'x_mm', 'y_mm', 'z_mm', 'global', *ROUND_KEYS
-)
-
-
 def _gfu_from_config(
         data: dict[str, Any],
         axis: str,
@@ -556,7 +571,7 @@ def load_storage_block(
         debug: bool = False,
         labels: bool | None = None
     ) -> StorageBlock:
-    """ Build a StorageBlock (and its Rows) from a parsed YAML config.
+    """ Build a StorageBlock and its Rows from a parsed YAML config.
 
     --> Storage block settings live under an optional top-level 'storage_block' object: 'name',
         'type' ('rowed' or 'positional', default rowed), 'font_size' (default label size for
@@ -654,7 +669,7 @@ def load_rows(data: dict[str, Any], font_size: float = 6.0) -> list[Row]:
 
     --> Slots are grouped under 'rows', each with its own 'slots' list and an
         optional 'name'; a top-level 'slots' list is loaded as a single row.
-    --> 'storage_block' 'global' keys (e.g. shape, scale) are defaults for every slot
+    --> 'storage_block' 'global' keys (e.g. shape, scoops) are defaults for every slot
     --> Other row-level keys are defaults for that row's slots
     --> Values set on an individual slot override both.
     --> font_size is the default label size (e.g. the storage block's); each row reserves space
