@@ -15,11 +15,12 @@ for name in ('yacv_server', 'build123d', 'asyncio'):
 logging.getLogger().handlers[0].addFilter(lambda record: record.levelno == logging.DEBUG)
 
 """
-Re-import threedpy from scratch after any of its files change.
+Re-import threedpy and the test helpers that import it after any of their files change.
 
 autoreload patches classes in place, which can't apply dataclass field changes (dataclass builds
-__init__ and the field list once). Dropping threedpy from sys.modules makes the next import rebuild
-everything. Other modules (e.g. yacv_server and its running server) are left alone.
+__init__ and the field list once). Dropping the repo's modules from sys.modules makes the next
+import rebuild everything. Helpers like tests/render_grid.py must go too, or they keep calling
+the old threedpy functions they imported. Other modules (e.g. yacv_server and its server) stay.
 """
 
 import os
@@ -27,25 +28,31 @@ import sys
 
 from IPython import get_ipython
 
-THREEDPY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'src', 'threedpy')
+REPO_DIR = os.path.dirname(os.path.abspath(__file__))
+WATCHED_DIRS = [os.path.join(REPO_DIR, 'src', 'threedpy'), os.path.join(REPO_DIR, 'tests')]
 
 
-def _threedpy_mtime() -> float:
+def _watched_mtime() -> float:
     return max(
-        os.path.getmtime(os.path.join(THREEDPY_DIR, f))
-        for f in os.listdir(THREEDPY_DIR) if f.endswith('.py')
+        os.path.getmtime(os.path.join(d, f))
+        for d in WATCHED_DIRS for f in os.listdir(d) if f.endswith('.py')
     )
 
 
-_threedpy_loaded = [_threedpy_mtime()]
+def _is_repo_module(module) -> bool:
+    path = getattr(module, '__file__', None) or ''
+    return any(os.path.abspath(path).startswith(d + os.sep) for d in WATCHED_DIRS)
 
 
-def _reimport_changed_threedpy(*_) -> None:
-    latest = _threedpy_mtime()
-    if latest > _threedpy_loaded[0]:
-        for name in [n for n in sys.modules if n == 'threedpy' or n.startswith('threedpy.')]:
+_watched_loaded = [_watched_mtime()]
+
+
+def _reimport_changed_modules(*_) -> None:
+    latest = _watched_mtime()
+    if latest > _watched_loaded[0]:
+        for name in [n for n, m in list(sys.modules.items()) if _is_repo_module(m)]:
             del sys.modules[name]
-        _threedpy_loaded[0] = latest
+        _watched_loaded[0] = latest
 
 
-get_ipython().events.register('pre_run_cell', _reimport_changed_threedpy)
+get_ipython().events.register('pre_run_cell', _reimport_changed_modules)
