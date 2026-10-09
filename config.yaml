@@ -1,4 +1,5 @@
 log_dir: '/mnt/e/log'
+out_dir: '/mnt/e/3dp/gf/bins/3dpy'
 
 # yacv preview colors, '#RRGGBB' or '#RRGGBBAA' (quoted bc # -> comment)
 # defaults
