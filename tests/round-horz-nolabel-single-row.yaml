@@ -12,6 +12,6 @@ rows:
     # for horizontal round slots, the measurements here are of the socket itself
     # they will get translated accordingly when the object is rotated 90
     - slots:
-        - {diameter: 11.75, depth: 50.35, scale: 1.03}
-        - {diameter: 13.15, depth: 50.65, scale: 1.03}
-        - {diameter: 13.15, depth: 51.05, scale: 1.03}
+        - {diameter: 11.75, depth: 50.35}
+        - {diameter: 13.15, depth: 50.65}
+        - {diameter: 13.15, depth: 51.05}

@@ -10,18 +10,18 @@ storage_block:
         shape: 'round_vert'
 rows:
     - slots:
-        - {diameter: 11.85, depth: 14.0, scale: 1.03, label: '5'}
-        - {diameter: 11.85, depth: 14.0, scale: 1.03, label: '6'}
-        - {diameter: 12.95, depth: 14.0, scale: 1.03, label: '7'}
+        - {diameter: 11.85, depth: 14.0, label: '5'}
+        - {diameter: 11.85, depth: 14.0, label: '6'}
+        - {diameter: 12.95, depth: 14.0, label: '7'}
     - slots:
-        - {diameter: 12.95, depth: 14.0, scale: 1.03, label: '8'}
-        - {diameter: 14.15, depth: 14.0, scale: 1.02, label: '9'}
-        - {diameter: 16.95, depth: 14.0, scale: 1.01, label: '10'}
+        - {diameter: 12.95, depth: 14.0, label: '8'}
+        - {diameter: 14.15, depth: 14.0, label: '9'}
+        - {diameter: 16.95, depth: 14.0, label: '10'}
     - slots:
-        - {diameter: 16.95, depth: 14.0, scale: 1.01, label: '11'}
-        - {diameter: 17.85, depth: 14.0, scale: 1.01, label: '12'}
-        - {diameter: 19.75, depth: 14.0, scale: 1.01, label: '13'}
+        - {diameter: 16.95, depth: 14.0, label: '11'}
+        - {diameter: 17.85, depth: 14.0, label: '12'}
+        - {diameter: 19.75, depth: 14.0, label: '13'}
     - slots:
-        - {diameter: 21.85, depth: 14.0, scale: 1.01, label: '14'}
-        - {diameter: 23.85, depth: 14.0, scale: 1.01, label: '15'}
-        - {diameter: 23.85, depth: 14.0, scale: 1.01, label: '16'}
+        - {diameter: 21.85, depth: 14.0, label: '14'}
+        - {diameter: 23.85, depth: 14.0, label: '15'}
+        - {diameter: 23.85, depth: 14.0, label: '16'}

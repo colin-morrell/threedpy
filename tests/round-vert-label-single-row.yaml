@@ -10,6 +10,6 @@ storage_block:
         shape: 'round_vert'
 rows:
     - slots:
-        - {diameter: 11.85, depth: 14.0, scale: 1.03, label: '5'}
-        - {diameter: 11.85, depth: 14.0, scale: 1.03, label: '6'}
-        - {diameter: 12.95, depth: 14.0, scale: 1.03, label: '7'}
+        - {diameter: 11.85, depth: 14.0, label: '5'}
+        - {diameter: 11.85, depth: 14.0, label: '6'}
+        - {diameter: 12.95, depth: 14.0, label: '7'}
