@@ -177,9 +177,9 @@ class Row:
         # only take default width if it doesn't touch/exceed the edges
         scoop_wall_width = min(max_wall_width, SCOOP_WALL_WIDTH)
 
-        logging.debug(f'[!] default_scoop(): x_block_width: {x_block_width}')
-        logging.debug(f'[!] default_scoop(): max_wall_width: {max_wall_width}')
-        logging.debug(f'[!] default_scoop(): scoop_wall_width: {scoop_wall_width}')
+        logger.debug(f'[!] default_scoop(): x_block_width: {x_block_width}')
+        logger.debug(f'[!] default_scoop(): max_wall_width: {max_wall_width}')
+        logger.debug(f'[!] default_scoop(): scoop_wall_width: {scoop_wall_width}')
 
         return Scoop(
             flat_width=self.x_scoop_span,
@@ -400,19 +400,19 @@ class StorageBlock:
         )
 
     def log_storage_block_creation(self) -> None:
-        logging.debug('-'*25)
-        logging.debug('[!] BUILDING STORAGE BLOCK [!]')
-        logging.debug(f'|           type: {self.type.value}')
-        logging.debug(f'|      font_size: {self.font_size}')
-        logging.debug(f'|          x_gfu: {self.x_gfu}')
-        logging.debug(f'|          y_gfu: {self.y_gfu}')
-        logging.debug(f'|          z_gfu: {self.z_gfu}')
-        logging.debug(f'|           x_mm: {round(self.x_mm, 3)}')
-        logging.debug(f'|           y_mm: {round(self.y_mm, 3)}')
-        logging.debug(f'|           z_mm: {round(self.z_mm, 3)}')
-        logging.debug(f'|    rows_height: {round(self.rows_height, 3)}')
-        logging.debug(f'| y_margin_total: {round(self.y_margin_total, 3)}')
-        logging.debug(f'|  y_row_spacing: {round(self.y_row_spacing, 3)}')
+        logger.debug('-'*25)
+        logger.debug('[!] BUILDING STORAGE BLOCK [!]')
+        logger.debug(f'|           type: {self.type.value}')
+        logger.debug(f'|      font_size: {self.font_size}')
+        logger.debug(f'|          x_gfu: {self.x_gfu}')
+        logger.debug(f'|          y_gfu: {self.y_gfu}')
+        logger.debug(f'|          z_gfu: {self.z_gfu}')
+        logger.debug(f'|           x_mm: {round(self.x_mm, 3)}')
+        logger.debug(f'|           y_mm: {round(self.y_mm, 3)}')
+        logger.debug(f'|           z_mm: {round(self.z_mm, 3)}')
+        logger.debug(f'|    rows_height: {round(self.rows_height, 3)}')
+        logger.debug(f'| y_margin_total: {round(self.y_margin_total, 3)}')
+        logger.debug(f'|  y_row_spacing: {round(self.y_row_spacing, 3)}')
 
     def slots(self) -> Iterator[Slot]:
         """All slots across every row, in row order."""

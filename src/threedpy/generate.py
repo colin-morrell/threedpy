@@ -8,11 +8,9 @@ from build123d import (
     Axis,
     BuildPart,
     BuildSketch,
-    Circle,
     Location,
     Locations,
     Mode,
-    Rectangle,
     Text,
     extrude,
 )
@@ -32,6 +30,7 @@ from threedpy.util import build_gf_bin, build_gf_box, export_as_stl
 CONFIG = load_config()
 SHOW_KWARGS = {key: CONFIG[key] for key in ('color_faces', 'color_edges') if CONFIG.get(key)}
 
+logger = logging.getLogger(__name__)
 
 # %%
 
@@ -54,7 +53,7 @@ def labeled_bin(x: int, y: int, z: int, txt: str):
         label_x: int = 0
         label_y: int = 0
 
-        with BuildSketch(top_face) as label, Locations((label_x, label_y, 0)):
+        with BuildSketch(top_face), Locations((label_x, label_y, 0)):
             Text(txt,
                  font_size=6,
                  font_path=FONT_PATH,
@@ -75,7 +74,7 @@ def build_work_surface(block: StorageBlock, arrange: bool = False) -> None:
         build_gf_box(int(block.x_gfu), int(block.y_gfu), block.z_gfu)
         return
     if not arrange:
-        logging.warning(f'x/y ({block.x_gfu} x {block.y_gfu} GFU) not whole units: building a plain box, no gridfinity base'
+        logger.warning(f'x/y ({block.x_gfu} x {block.y_gfu} GFU) not whole units: building a plain box, no gridfinity base'
                         )
     with Locations((0,0,0)):
         block.build_test_surface(rowed_storage_block)
@@ -144,65 +143,6 @@ def generate_storage_block(block: StorageBlock, arrange: bool = False):
     if block.type == StorageBlockType.POSITIONAL:
         return positional_storage_block(block, arrange=arrange)
     return rowed_storage_block(block, arrange=arrange)
-
-
-def scale_test(
-        diameter: float,
-        depth: float,
-        path: str,
-        scales: list[float] = [1.01, 1.02, 1.03],
-        preview: bool = True,
-    ):
-    """Generate test fitments for a given diameter using provided scale(s)."""
-
-    # TODO --> update for all Shapes
-        # TODO --> round_horz
-    # TODO --> variable margins (3 below)
-
-    width = diameter + 3
-    length = width
-
-    previews, names = [], []
-    for scale in scales:
-
-        scaled_diameter = diameter * scale
-        scaled_radius = scaled_diameter / 2
-
-        with BuildPart() as scale_test:
-            with BuildSketch() as box, Locations((0, 0, 0)):
-                Rectangle(
-                    width,
-                    length,
-                    align=(Align.CENTER, Align.MIN)
-                )
-
-            extrude(amount=depth)
-
-            faces = scale_test.faces().sort_by(Axis.Z)
-            top_face = faces[-1]
-
-            y = 0 - (width / 2)
-            with BuildSketch(top_face) as slot, Locations((0, 0, 0)):
-                Circle(
-                    radius=scaled_radius,
-                    align=(Align.CENTER, Align.CENTER)
-                )
-            extrude(amount=-depth, mode=Mode.SUBTRACT)
-
-        str_scale = str(scale).replace('.', '')
-        str_diameter = str(diameter)
-        filename = f'test-{str_scale}-{str_diameter}.stl'
-        export_path = os.path.join(path, filename)
-        export_as_stl(scale_test, export_path)
-
-        # side by side along X, 5mm apart
-        previews.append(scale_test.part.moved(Location((len(previews) * (width + 5), 0, 0))))
-        names.append(os.path.splitext(filename)[0])
-
-    if preview:
-        # one call so auto_clear (default) removes everything previously shown except these tests
-        show(*previews, names=names, **SHOW_KWARGS)
-
 
 
 def storage_block_from_args(args: argparse.Namespace, in_path: str) -> StorageBlock:
@@ -320,10 +260,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
 
+    """
     if args.command == 'scale-test':
         os.makedirs(args.out_path, exist_ok=True)
         scale_test(args.diameter, args.depth, args.out_path, args.scales, preview=not args.no_show)
         return
+    """
 
     names = block_names(args.in_paths)
     blocks = [storage_block_from_args(args, path) for path in args.in_paths]

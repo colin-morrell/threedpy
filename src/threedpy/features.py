@@ -36,6 +36,8 @@ from threedpy.constants import (
     SLOT_DIAMETER_CLEARANCE,
 )
 
+logger = logging.getLogger(__name__)
+
 """
 Physical features drawn on/removed from the surface of a storageBlock.
 """
@@ -133,15 +135,14 @@ class Scoop:
         top = edges(Select.LAST).group_by(Axis.Z)[-1]
         # a rim off the surface leaves curved wall/surface intersections, which can crash OCCT
         if abs(top[0].center().Z - bb.max.Z) > tolerance:
-            logging.warning(
-                f'scoop rim (z={bb.max.Z:.2f}) is not at the top surface (z={top[0].center().Z:.2f}); not filleting'
-                
+            logger.warning(
+                f'scoop rim (z={bb.max.Z:.2f}) not at top surface (z={top[0].center().Z:.2f}); not filleting'
             )
             return
         # a fresh rim on a flat surface is lines (+ arcs at round openings); BSPLINEs are leftovers
         # of an overlapping scoop's fillet, e.g. neighboring slot scoops
         if any(e.geom_type == GeomType.BSPLINE for e in top):
-            logging.warning('scoop rim overlaps another scoop\'s fillet; not filleting')
+            logger.warning('scoop rim overlaps another scoop\'s fillet; not filleting')
             return
         for rim in (top.filter_by(in_footprint), top):
             try:
@@ -149,17 +150,17 @@ class Scoop:
                 return
             except ValueError:
                 continue
-        logging.warning(
+        logger.warning(
             f'scoop rim fillet (radius {self.fillet_radius}) failed, leaving it sharp'
         )
 
     def log_scoop_creation(self, coords: tuple) -> None:
-        logging.debug('-'*25)
-        logging.debug('[!] BUILDING SCOOP [!]')
-        logging.debug('|   coords: x={}, y={}, z={}'.format(*(round(c, 3) for c in coords)))
-        logging.debug(f'|   flat_w: {round(self.flat_width, 3)}')
-        logging.debug(f'|   wall_w: {round(self.wall_width, 3)}')
-        logging.debug(f'|   length: {round(self.length, 3)}')
+        logger.debug('-'*25)
+        logger.debug('[!] BUILDING SCOOP [!]')
+        logger.debug('|   coords: x={}, y={}, z={}'.format(*(round(c, 3) for c in coords)))
+        logger.debug(f'|   flat_w: {round(self.flat_width, 3)}')
+        logger.debug(f'|   wall_w: {round(self.wall_width, 3)}')
+        logger.debug(f'|   length: {round(self.length, 3)}')
 
     @classmethod
     def resolve(cls, spec: 'Scoop | dict | None', default: 'Scoop') -> 'Scoop':
@@ -207,13 +208,11 @@ class Label:
         )
 
     def log_label_creation(self, coords: tuple) -> None:
-        logging.debug('[!] BUILDING LABEL @ x={} y={}'.format(*(round(c, 3) for c in coords)))
+        logger.debug('[!] BUILDING LABEL @ x={} y={}'.format(*(round(c, 3) for c in coords)))
 
     @property
     def is_empty(self) -> bool:
-        if not self.label_text:
-            return True
-        return False
+        return bool(not self.label_text)
 
 
 class LabelMode(Enum):
@@ -236,11 +235,6 @@ class Slot:
         # --> slot methodology should be entirely shape independent
         # --> no length/width/diameter, everything in terms of x/y/z
         # --> transformations like diameter -> depth should happen in Item w/ Orientation+Direction
-
-    # TODO --> validation (rectangle can't have length/width 0, etc)
-    # TODO --> center option for x/y. calc box_len / slot_len and offset for spacing
-
-    # TODO --> scoops for horz
 
     debug: bool = False
     label: Label | None = None
@@ -307,16 +301,16 @@ class Slot:
         return self.labels is not False and self.label is not None and bool(self.label.label_text)
 
     def log_slot_creation(self, coords: tuple) -> None:
-        logging.debug('-'*25)
-        logging.debug('[!] BUILDING SLOT [!]')
-        logging.debug(f'|    label: {self.label if self.draws_label else None}')
-        logging.debug(f'|    shape: {self.shape}')
-        logging.debug(f'|   slot_z: {round(self.z, 3)}')
-        logging.debug('|   coords: x={}, y={}, z={}'.format(*(round(c, 3) for c in coords)))
-        logging.debug(f'| diameter: {round(self.scaled_diameter, 3)}')
-        logging.debug(f'|    depth: {round(self.scaled_depth, 3)}')
-        logging.debug(f'|     mode: {self.built_mode}')
-        logging.debug(f'| rotation: {self.built_rotation}')
+        logger.debug('-'*25)
+        logger.debug('[!] BUILDING SLOT [!]')
+        logger.debug(f'|    label: {self.label if self.draws_label else None}')
+        logger.debug(f'|    shape: {self.shape}')
+        logger.debug(f'|   slot_z: {round(self.z, 3)}')
+        logger.debug('|   coords: x={}, y={}, z={}'.format(*(round(c, 3) for c in coords)))
+        logger.debug(f'| diameter: {round(self.scaled_diameter, 3)}')
+        logger.debug(f'|    depth: {round(self.scaled_depth, 3)}')
+        logger.debug(f'|     mode: {self.built_mode}')
+        logger.debug(f'| rotation: {self.built_rotation}')
 
     @property
     def built_align(self):
