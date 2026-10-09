@@ -65,19 +65,23 @@ viewer at <http://localhost:32323> (set `YACV_PORT` to change the port).
 ```sh
 uv run threedpy --help
 
-# storage block laid out and sized by the YAML's "storage_block" mapping
-uv run threedpy build src/threedpy/examples/husky-sockets-vert-mm.yaml -o block.stl
+# storage block laid out and sized by the YAML's "storage_block" mapping, exported to out_dir
+uv run threedpy build src/threedpy/examples/husky-sockets-vert-mm.yaml -o
+
+# several blocks at once, previewed in a column
+uv run threedpy build src/threedpy/examples/etorx.yaml src/threedpy/examples/solder-station.yaml
 
 # override the YAML's layout type and size
-uv run threedpy build input.yaml -t positional -x 2 -y 3 -z 3 -o block.stl
+uv run threedpy build input.yaml -t positional -x 2 -y 3 -z 3
 
 # test fitments for a 12.95mm diameter, 7mm deep slot at several scales
 uv run threedpy scale-test 12.95 7 -o tests/ -s 1.01 1.02 1.03
 ```
 
-`-t`, `-x`/`-y`/`-z` (gridfinity units) and `-n` override the YAML's storage block settings. `--arrange`
-swaps the (slow) gridfinity base for a plain box while you arrange slots, and `--no-show` skips
-the yacv preview.
+`-t` and `-x`/`-y`/`-z` (gridfinity units) override the YAML's storage block settings (for
+every input file). `-o` exports each block to `config.yaml`'s `out_dir` as `<yaml file name>.stl`.
+In yacv each block is named after its YAML file. `--arrange` swaps the (slow) gridfinity base for
+a plain box while you arrange slots, and `--no-show` skips the yacv preview.
 
 ### Storage block YAML
 
