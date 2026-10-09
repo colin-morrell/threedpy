@@ -35,11 +35,18 @@ from threedpy.constants import (
     FONT_PATH,
     GFU_GRID,
     GFU_GRID_NOMINAL,
-    GFU_HEIGHT
+    GFU_HEIGHT,
+    SCOOP_FLAT_WIDTH,
+    SCOOP_WALL_WIDTH,
+    SCOOP_LENGTH,
+    SCOOP_FILLET_RADIUS,
+    SLOT_DEPTH_CLEARANCE,
+    SLOT_DIAMETER_CLEARANCE,
 )
 from threedpy.util import DoublyLinkedList
+
 """
-Physical features drawn on the surface of a storageBlock.
+Physical features drawn on/removed from the surface of a storageBlock.
 """
 
 
@@ -59,15 +66,6 @@ class Shape(Enum):
     PRISM_RECT = 'prism_rect'
     ROUND_HORZ = 'round_horz'
     ROUND_VERT = 'round_vert'
-
-
-# defaults along X
-SCOOP_FLAT_WIDTH: float = 10.0
-SCOOP_WALL_WIDTH: float = 7.5
-# default scoop length along Y
-SCOOP_LENGTH: float = 20.0
-# rounds the rim where a scoop meets the top surface; 0 = sharp
-SCOOP_FILLET_RADIUS: float = 2.5
 
 
 @dataclass
@@ -218,10 +216,7 @@ class Label:
         )
 
     def log_label_creation(self, coords: tuple) -> None:
-        logging.debug('-'*25)
-        logging.debug('[!] BUILDING LABEL [!]')
-        logging.debug('|    label: {}'.format(self.label_text))
-        logging.debug('|   coords: x={}, y={}'.format(*(round(c, 3) for c in coords)))
+        logging.debug('[!] BUILDING LABEL @ x={} y={}'.format(*(round(c, 3) for c in coords)))
 
     @property
     def is_empty(self) -> bool:
@@ -270,7 +265,6 @@ class Slot:
     font_size: float = 6.0
     length: float = 0.0
     width: float = 0.0
-    scale: float = 1.01
     x: float = 0.0
     y: float = 0.0
     z_offset: float = 0.0
@@ -324,7 +318,7 @@ class Slot:
     def log_slot_creation(self, coords: tuple) -> None:
         logging.debug('-'*25)
         logging.debug('[!] BUILDING SLOT [!]')
-        logging.debug('|    label: {}'.format(self.label))
+        logging.debug('|    label: {}'.format(self.label if self.draws_label else None))
         logging.debug('|    shape: {}'.format(self.shape))
         logging.debug('|   slot_z: {}'.format(round(self.z, 3)))
         logging.debug('|   coords: x={}, y={}, z={}'.format(*(round(c, 3) for c in coords)))
@@ -359,13 +353,11 @@ class Slot:
 
     @property
     def scaled_depth(self) -> float:
-        #return self.depth * self.scale
-        return self.depth + 0.5
+        return self.depth + SLOT_DEPTH_CLEARANCE
 
     @property
     def scaled_diameter(self) -> float:
-        #return self.diameter * self.scale
-        return self.diameter + 0.5
+        return self.diameter + SLOT_DIAMETER_CLEARANCE
 
     @property
     def scaled_radius(self) -> float:
