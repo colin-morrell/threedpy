@@ -23,3 +23,6 @@ build/
 # generated models
 *.stl
 !src/threedpy/examples/*.stl
+
+# block configs
+yaml/
