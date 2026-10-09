@@ -30,9 +30,3 @@ dev = [
     "ruff",
     "types-pyyaml (>=6.0.12.20260906,<7.0.0.0)"
 ]
-
-[tool.ruff]
-line-length = 100
-
-[tool.ruff.format]
-quote-style = "single"
