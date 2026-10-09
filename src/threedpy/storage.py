@@ -2,48 +2,31 @@ import logging
 import math
 import os
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass, field, fields, replace
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
 import yaml
 from build123d import (
     Align,
-    BasePartObject,
-    Bezier,
     Box,
-    BuildLine,
-    BuildPart,
     BuildSketch,
-    Cylinder,
-    Line,
     Locations,
     Mode,
-    Plane,
-    Text,
     extrude,
-    make_face,
-    mirror
 )
 
 from threedpy.constants import (
     CONFIG_PATH,
-    FONT_PATH,
     GFU_GRID,
     GFU_GRID_NOMINAL,
     GFU_HEIGHT,
     ROUND_KEYS,
     SCOOP_FILLET_RADIUS,
-    SCOOP_LENGTH,
     SCOOP_WALL_WIDTH,
-    STORAGE_BLOCK_KEYS
+    STORAGE_BLOCK_KEYS,
 )
-from threedpy.features import (
-    Label,
-    Scoop,
-    Shape,
-    Slot
-)
+from threedpy.features import Label, Scoop, Shape, Slot
 from threedpy.util import DoublyLinkedList
 
 
@@ -87,7 +70,7 @@ class Row:
     _y: float = 0.0
 
     def __post_init__(self) -> None:
-        Scoop.check_keys(self.full_scoop, "row '{}'".format(self.name))
+        Scoop.check_keys(self.full_scoop, f"row '{self.name}'")
 
     def add_slot(self, slot: Slot) -> Slot:
         slot.font_size = self.font_size
@@ -154,7 +137,7 @@ class Row:
     def x_slot_spacing(self) -> float:
         """Space on X axis between each slot + L/R edges."""
         if self.width == 0:
-            raise ValueError('[!] row.width: {}. set width before calling.'.format(self.width))
+            raise ValueError(f'[!] row.width: {self.width}. set width before calling.')
         return self.x_total_spacing / (len(self) + 1)
 
     @property
@@ -194,9 +177,9 @@ class Row:
         # only take default width if it doesn't touch/exceed the edges
         scoop_wall_width = min(max_wall_width, SCOOP_WALL_WIDTH)
 
-        logging.debug('[!] default_scoop(): x_block_width: {}'.format(x_block_width))
-        logging.debug('[!] default_scoop(): max_wall_width: {}'.format(max_wall_width))
-        logging.debug('[!] default_scoop(): scoop_wall_width: {}'.format(scoop_wall_width))
+        logging.debug(f'[!] default_scoop(): x_block_width: {x_block_width}')
+        logging.debug(f'[!] default_scoop(): max_wall_width: {max_wall_width}')
+        logging.debug(f'[!] default_scoop(): scoop_wall_width: {scoop_wall_width}')
 
         return Scoop(
             flat_width=self.x_scoop_span,
@@ -299,7 +282,7 @@ class StorageBlock:
                 setattr(self, axis, math.ceil(round(getattr(self, axis), 6)))
 
     def add_row(self, row: Row) -> Row:
-        logger.debug('add_row(): {} slots'.format(len(row)))
+        logger.debug(f'add_row(): {len(row)} slots')
         row.debug = self.debug
         if row.scoops is None:
             row.scoops = self.scoops
@@ -342,9 +325,8 @@ class StorageBlock:
             row.y_label
         )
         slot.label.log_label_creation(label_coords)
-        with BuildSketch(top_face) as label:
-            with Locations(label_coords):
-                slot.label.build()
+        with BuildSketch(top_face) as label, Locations(label_coords):
+            slot.label.build()
         extrude(label.sketch, amount=1.0)
 
     def build_row_scoop(self, row: Row, surface_z: float) -> None:
@@ -355,9 +337,7 @@ class StorageBlock:
             row.y_scoop,
             surface_z
         )
-        logger.debug('building full-row scoop {} at {}'.format(
-            scoop, tuple(round(c, 3) for c in scoop_coords)
-        ))
+        logger.debug(f'building full-row scoop {scoop} at {tuple(round(c, 3) for c in scoop_coords)}')
         with Locations(scoop_coords):
             scoop.build(Mode.ADD if self.debug else Mode.SUBTRACT)
 
@@ -422,17 +402,17 @@ class StorageBlock:
     def log_storage_block_creation(self) -> None:
         logging.debug('-'*25)
         logging.debug('[!] BUILDING STORAGE BLOCK [!]')
-        logging.debug('|           type: {}'.format(self.type.value))
-        logging.debug('|      font_size: {}'.format(self.font_size))
-        logging.debug('|          x_gfu: {}'.format(self.x_gfu))
-        logging.debug('|          y_gfu: {}'.format(self.y_gfu))
-        logging.debug('|          z_gfu: {}'.format(self.z_gfu))
-        logging.debug('|           x_mm: {}'.format(round(self.x_mm, 3)))
-        logging.debug('|           y_mm: {}'.format(round(self.y_mm, 3)))
-        logging.debug('|           z_mm: {}'.format(round(self.z_mm, 3)))
-        logging.debug('|    rows_height: {}'.format(round(self.rows_height, 3)))
-        logging.debug('| y_margin_total: {}'.format(round(self.y_margin_total, 3)))
-        logging.debug('|  y_row_spacing: {}'.format(round(self.y_row_spacing, 3)))
+        logging.debug(f'|           type: {self.type.value}')
+        logging.debug(f'|      font_size: {self.font_size}')
+        logging.debug(f'|          x_gfu: {self.x_gfu}')
+        logging.debug(f'|          y_gfu: {self.y_gfu}')
+        logging.debug(f'|          z_gfu: {self.z_gfu}')
+        logging.debug(f'|           x_mm: {round(self.x_mm, 3)}')
+        logging.debug(f'|           y_mm: {round(self.y_mm, 3)}')
+        logging.debug(f'|           z_mm: {round(self.z_mm, 3)}')
+        logging.debug(f'|    rows_height: {round(self.rows_height, 3)}')
+        logging.debug(f'| y_margin_total: {round(self.y_margin_total, 3)}')
+        logging.debug(f'|  y_row_spacing: {round(self.y_row_spacing, 3)}')
 
     def slots(self) -> Iterator[Slot]:
         """All slots across every row, in row order."""
@@ -554,10 +534,10 @@ def _gfu_from_config(
 
     gfu, mm = data.get(axis), data.get(axis + '_mm')
     if gfu is not None and mm is not None:
-        raise ValueError('[!] storage_block: give {0} or {0}_mm, not both'.format(axis))
+        raise ValueError(f'[!] storage_block: give {axis} or {axis}_mm, not both')
     if mm is not None:
         gfu = mm / (nominal_mm if round_up else built_mm)
-        logger.info('storage_block: {}_mm={} -> {}={}'.format(axis, mm, axis, gfu))
+        logger.info(f'storage_block: {axis}_mm={mm} -> {axis}={gfu}')
     return gfu
 
 
@@ -639,7 +619,7 @@ def load_storage_block_from_path(
     ) -> StorageBlock:
     """Build a StorageBlock from a YAML file. The name defaults to the filename if not set in the
     YAML."""
-    logger.info('loading storage block from {}'.format(path))
+    logger.info(f'loading storage block from {path}')
     with open(path) as f:
         block = load_storage_block(
             yaml.safe_load(f),
@@ -702,7 +682,7 @@ def load_rows(data: dict[str, Any], font_size: float = 6.0) -> list[Row]:
 
 def load_rows_from_path(path: str | os.PathLike[str]) -> list[Row]:
     """Build Rows from a YAML file."""
-    logger.info('loading rows from {}'.format(path))
+    logger.info(f'loading rows from {path}')
     with open(path) as f:
         return load_rows(yaml.safe_load(f))
 
@@ -714,7 +694,7 @@ def load_slots(data: dict[str, Any]) -> list[Slot]:
 
 def load_slots_from_path(path: str | os.PathLike[str]) -> list[Slot]:
     """Build Slots from a YAML file, ignoring any row grouping."""
-    logger.info('loading slots from {}'.format(path))
+    logger.info(f'loading slots from {path}')
     with open(path) as f:
         return load_slots(yaml.safe_load(f))
 
@@ -726,7 +706,7 @@ def main() -> None:
     row.add_slot(
         Slot(label=Label(label_text='M3'), shape=Shape.PRISM_HEXA, diameter=12.0, depth=20.0)
     )
-    logger.info('Built {} with {} row(s)'.format(block.name, len(block)))
+    logger.info(f'Built {block.name} with {len(block)} row(s)')
 
 
 if __name__ == '__main__':

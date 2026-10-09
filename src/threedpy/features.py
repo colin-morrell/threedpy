@@ -1,12 +1,8 @@
 import logging
-import math
-import os
-from collections.abc import Iterable, Iterator
-from dataclasses import dataclass, field, fields, replace
+from dataclasses import dataclass, fields, replace
 from enum import Enum
 from typing import Any
 
-import yaml
 from build123d import (
     Align,
     Axis,
@@ -19,7 +15,6 @@ from build123d import (
     Cylinder,
     GeomType,
     Line,
-    Locations,
     Mode,
     Plane,
     Select,
@@ -28,22 +23,18 @@ from build123d import (
     extrude,
     fillet,
     make_face,
-    mirror
+    mirror,
 )
 
 from threedpy.constants import (
     FONT_PATH,
-    GFU_GRID,
-    GFU_GRID_NOMINAL,
-    GFU_HEIGHT,
-    SCOOP_FLAT_WIDTH,
-    SCOOP_WALL_WIDTH,
-    SCOOP_LENGTH,
     SCOOP_FILLET_RADIUS,
+    SCOOP_FLAT_WIDTH,
+    SCOOP_LENGTH,
+    SCOOP_WALL_WIDTH,
     SLOT_DEPTH_CLEARANCE,
     SLOT_DIAMETER_CLEARANCE,
 )
-from threedpy.util import DoublyLinkedList
 
 """
 Physical features drawn on/removed from the surface of a storageBlock.
@@ -143,8 +134,8 @@ class Scoop:
         # a rim off the surface leaves curved wall/surface intersections, which can crash OCCT
         if abs(top[0].center().Z - bb.max.Z) > tolerance:
             logging.warning(
-                'scoop rim (z={:.2f}) is not at the top surface (z={:.2f}); not filleting'
-                .format(bb.max.Z, top[0].center().Z)
+                f'scoop rim (z={bb.max.Z:.2f}) is not at the top surface (z={top[0].center().Z:.2f}); not filleting'
+                
             )
             return
         # a fresh rim on a flat surface is lines (+ arcs at round openings); BSPLINEs are leftovers
@@ -159,16 +150,16 @@ class Scoop:
             except ValueError:
                 continue
         logging.warning(
-            'scoop rim fillet (radius {}) failed, leaving it sharp'.format(self.fillet_radius)
+            f'scoop rim fillet (radius {self.fillet_radius}) failed, leaving it sharp'
         )
 
     def log_scoop_creation(self, coords: tuple) -> None:
         logging.debug('-'*25)
         logging.debug('[!] BUILDING SCOOP [!]')
         logging.debug('|   coords: x={}, y={}, z={}'.format(*(round(c, 3) for c in coords)))
-        logging.debug('|   flat_w: {}'.format(round(self.flat_width, 3)))
-        logging.debug('|   wall_w: {}'.format(round(self.wall_width, 3)))
-        logging.debug('|   length: {}'.format(round(self.length, 3)))
+        logging.debug(f'|   flat_w: {round(self.flat_width, 3)}')
+        logging.debug(f'|   wall_w: {round(self.wall_width, 3)}')
+        logging.debug(f'|   length: {round(self.length, 3)}')
 
     @classmethod
     def resolve(cls, spec: 'Scoop | dict | None', default: 'Scoop') -> 'Scoop':
@@ -272,7 +263,7 @@ class Slot:
     def __post_init__(self) -> None:
         if not isinstance(self.shape, Shape):
             self.shape = Shape(self.shape)
-        Scoop.check_keys(self.scoop, "slot '{}'".format(self.label))
+        Scoop.check_keys(self.scoop, f"slot '{self.label}'")
 
     def build(self) -> None:
         """Build the slot's shape using build123d."""
@@ -295,7 +286,7 @@ class Slot:
                 mode=Mode.SUBTRACT
             )
         else:
-            raise ValueError('[!] invalid slot shape: {}'.format(self.shape))
+            raise ValueError(f'[!] invalid slot shape: {self.shape}')
 
     def built_scoop(self) -> Scoop:
         """The scoop to draw: scoop if it's a Scoop, else default_scoop with scoop's overrides."""
@@ -318,14 +309,14 @@ class Slot:
     def log_slot_creation(self, coords: tuple) -> None:
         logging.debug('-'*25)
         logging.debug('[!] BUILDING SLOT [!]')
-        logging.debug('|    label: {}'.format(self.label if self.draws_label else None))
-        logging.debug('|    shape: {}'.format(self.shape))
-        logging.debug('|   slot_z: {}'.format(round(self.z, 3)))
+        logging.debug(f'|    label: {self.label if self.draws_label else None}')
+        logging.debug(f'|    shape: {self.shape}')
+        logging.debug(f'|   slot_z: {round(self.z, 3)}')
         logging.debug('|   coords: x={}, y={}, z={}'.format(*(round(c, 3) for c in coords)))
-        logging.debug('| diameter: {}'.format(round(self.scaled_diameter, 3)))
-        logging.debug('|    depth: {}'.format(round(self.scaled_depth, 3)))
-        logging.debug('|     mode: {}'.format(self.built_mode))
-        logging.debug('| rotation: {}'.format(self.built_rotation))
+        logging.debug(f'| diameter: {round(self.scaled_diameter, 3)}')
+        logging.debug(f'|    depth: {round(self.scaled_depth, 3)}')
+        logging.debug(f'|     mode: {self.built_mode}')
+        logging.debug(f'| rotation: {self.built_rotation}')
 
     @property
     def built_align(self):

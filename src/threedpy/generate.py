@@ -6,43 +6,26 @@ import sys
 from build123d import (
     Align,
     Axis,
-    Box,
     BuildPart,
     BuildSketch,
     Circle,
-    Cylinder,
     Location,
     Locations,
-    Rectangle,
-    RegularPolygon,
     Mode,
+    Rectangle,
     Text,
-    extrude
+    extrude,
 )
-from gridfinity_build123d import (
-    Bin
-)
-from gridfinity_build123d.constants import gridfinity_standard
-from threedpy.constants import FONT_PATH, GFU_GRID, GFU_HEIGHT, PREVIEW_GAP
-from threedpy.features import (
-    Shape,
-    Slot
-)
+from yacv_server import show
+
+from threedpy.constants import FONT_PATH, PREVIEW_GAP
 from threedpy.storage import (
     StorageBlock,
     StorageBlockType,
-    Row,
     load_config,
     load_storage_block_from_path,
-    load_rows_from_path,
-    load_slots_from_path
 )
-from threedpy.util import (
-    build_gf_bin,
-    build_gf_box,
-    export_as_stl
-)
-from yacv_server import show
+from threedpy.util import build_gf_bin, build_gf_box, export_as_stl
 
 # yacv preview colors from config.yaml; unset keys fall back to yacv's defaults
 # re-read on every %run since this module is re-executed but threedpy.storage isn't
@@ -58,7 +41,7 @@ def labeled_bins(txts: list):
     for l in txts:
         _bin = labeled_bin(l)
         filename = l.split()[0]
-        export_path = '/mnt/e/3dp/gf/bins/custom/bolts/{}.stl'.format(filename)
+        export_path = f'/mnt/e/3dp/gf/bins/custom/bolts/{filename}.stl'
         export_as_stl(_bin, export_path)
 
 
@@ -71,14 +54,13 @@ def labeled_bin(x: int, y: int, z: int, txt: str):
         label_x: int = 0
         label_y: int = 0
 
-        with BuildSketch(top_face) as label:
-            with Locations((label_x, label_y, 0)):
-                Text(txt,
-                     font_size=6,
-                     font_path=FONT_PATH,
-                     align=(Align.CENTER, Align.MIN),
-                     rotation=0
-                     )
+        with BuildSketch(top_face) as label, Locations((label_x, label_y, 0)):
+            Text(txt,
+                 font_size=6,
+                 font_path=FONT_PATH,
+                 align=(Align.CENTER, Align.MIN),
+                 rotation=0
+                 )
 
         extrude(amount=1, mode=Mode.ADD)
         show(gf_bin, **SHOW_KWARGS)
@@ -93,8 +75,8 @@ def build_work_surface(block: StorageBlock, arrange: bool = False) -> None:
         build_gf_box(int(block.x_gfu), int(block.y_gfu), block.z_gfu)
         return
     if not arrange:
-        logging.warning('x/y ({} x {} GFU) not whole units: building a plain box, no gridfinity base'
-                        .format(block.x_gfu, block.y_gfu))
+        logging.warning(f'x/y ({block.x_gfu} x {block.y_gfu} GFU) not whole units: building a plain box, no gridfinity base'
+                        )
     with Locations((0,0,0)):
         block.build_test_surface(rowed_storage_block)
 
@@ -187,13 +169,12 @@ def scale_test(
         scaled_radius = scaled_diameter / 2
 
         with BuildPart() as scale_test:
-            with BuildSketch() as box:
-                with Locations((0, 0, 0)):
-                    Rectangle(
-                        width,
-                        length,
-                        align=(Align.CENTER, Align.MIN)
-                    )
+            with BuildSketch() as box, Locations((0, 0, 0)):
+                Rectangle(
+                    width,
+                    length,
+                    align=(Align.CENTER, Align.MIN)
+                )
 
             extrude(amount=depth)
 
@@ -201,17 +182,16 @@ def scale_test(
             top_face = faces[-1]
 
             y = 0 - (width / 2)
-            with BuildSketch(top_face) as slot:
-                with Locations((0, 0, 0)):
-                    Circle(
-                        radius=scaled_radius,
-                        align=(Align.CENTER, Align.CENTER)
-                    )
+            with BuildSketch(top_face) as slot, Locations((0, 0, 0)):
+                Circle(
+                    radius=scaled_radius,
+                    align=(Align.CENTER, Align.CENTER)
+                )
             extrude(amount=-depth, mode=Mode.SUBTRACT)
 
         str_scale = str(scale).replace('.', '')
         str_diameter = str(diameter)
-        filename = 'test-{}-{}.stl'.format(str_scale, str_diameter)
+        filename = f'test-{str_scale}-{str_diameter}.stl'
         export_path = os.path.join(path, filename)
         export_as_stl(scale_test, export_path)
 
@@ -223,7 +203,6 @@ def scale_test(
         # one call so auto_clear (default) removes everything previously shown except these tests
         show(*previews, names=names, **SHOW_KWARGS)
 
-    return None
 
 
 def storage_block_from_args(args: argparse.Namespace, in_path: str) -> StorageBlock:
