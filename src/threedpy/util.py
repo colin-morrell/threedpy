@@ -1,30 +1,20 @@
 import logging
 import os
 from collections.abc import Iterable, Iterator
-from build123d import (
-    Align,
-    Axis,
-    BuildPart,
-    BuildSketch,
-    Circle,
-    Locations,
-    Mode,
-    RegularPolygon,
-    Text,
-    extrude
-)
+
 from build123d.exporters3d import export_stl
 from gridfinity_build123d import (
-    Bin,
     BaseEqual,
+    Bin,
     BottomCorners,
     Compartment,
     CompartmentsEqual,
-    GridfinityRefinedMagnetHolePressfit as MagHole,
     Label,
     Scoop,
 )
-from gridfinity_build123d.constants import gridfinity_standard
+from gridfinity_build123d import (
+    GridfinityRefinedMagnetHolePressfit as MagHole,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +31,7 @@ class Node[T]:
         self.next: Node[T] | None = None
 
     def __repr__(self) -> str:
-        return 'Node({!r})'.format(self.value)
+        return f'Node({self.value!r})'
 
 
 class DoublyLinkedList[T]:
@@ -131,7 +121,7 @@ class DoublyLinkedList[T]:
         return self._len
 
     def __repr__(self) -> str:
-        return 'DoublyLinkedList({!r})'.format(list(self))
+        return f'DoublyLinkedList({list(self)!r})'
 
 
 def build_gf_base(grid_x: int, grid_y: int):
@@ -181,23 +171,23 @@ def export_as_stl(part, path: str | os.PathLike[str]) -> None:
     if not path:
         raise ValueError('[!] export path is empty')
     if os.path.isdir(path):
-        raise ValueError('[!] export path is a directory: {}'.format(path))
+        raise ValueError(f'[!] export path is a directory: {path}')
     if os.path.splitext(path)[1].lower() != '.stl':
-        raise ValueError('[!] export path must end in .stl: {}'.format(path))
+        raise ValueError(f'[!] export path must end in .stl: {path}')
 
     parent = os.path.dirname(os.path.abspath(path))
     if not os.path.isdir(parent):
-        raise FileNotFoundError('[!] export directory does not exist: {}'.format(parent))
+        raise FileNotFoundError(f'[!] export directory does not exist: {parent}')
     if os.path.exists(path):
         if not os.access(path, os.W_OK):
-            raise PermissionError('[!] export path is not writable: {}'.format(path))
-        logger.warning('overwriting existing file: {}'.format(path))
+            raise PermissionError(f'[!] export path is not writable: {path}')
+        logger.warning(f'overwriting existing file: {path}')
     elif not os.access(parent, os.W_OK):
-        raise PermissionError('[!] export directory is not writable: {}'.format(parent))
+        raise PermissionError(f'[!] export directory is not writable: {parent}')
 
     if not export_stl(part.part, path):
-        raise OSError('[!] failed to export STL: {}'.format(path))
-    logger.info('exported STL to {}'.format(path))
+        raise OSError(f'[!] failed to export STL: {path}')
+    logger.info(f'exported STL to {path}')
 
 
 # %%
