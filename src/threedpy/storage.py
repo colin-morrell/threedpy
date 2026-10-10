@@ -10,10 +10,8 @@ import yaml
 from build123d import (
     Align,
     Box,
-    BuildSketch,
     Locations,
     Mode,
-    extrude,
 )
 
 from threedpy.constants import (
@@ -26,7 +24,7 @@ from threedpy.constants import (
     SCOOP_WALL_WIDTH,
     STORAGE_BLOCK_KEYS,
 )
-from threedpy.features import Label, Scoop, Shape, Slot
+from threedpy.features import Label, LabelMode, Scoop, ScoopMode, Shape, Slot
 from threedpy.util import DoublyLinkedList
 
 
@@ -40,11 +38,12 @@ logger = logging.getLogger(__name__)
 
 
 class StorageBlockType(Enum):
-    """
+    """StorageBlockType
+
     How a StorageBlock's slots are laid out.
 
-    --> POSITIONAL: each slot is placed at the x/y given for it in the YAML config.
-    --> ROWED: rows are evenly spaced along Y, and each row's slots evenly spaced along X.
+    POSITIONAL: each slot is placed at the x/y given for it in the YAML config.
+    ROWED: rows are evenly spaced along Y, and each row's slots are evenly spaced along X.
     """
 
     POSITIONAL = 'positional'
@@ -55,22 +54,20 @@ class StorageBlockType(Enum):
 class Row:
     """Row
 
-    An ordered collection of slots. For even spacing (e.g. generate.rowed_storage_block()), a
-    Row's Slots are generated left-to-right along the X-axis.
+    An ordered collection of slots.
+
+    Positional blocks ignore order.
+    Rowed blocks draw slots and their features left-to-right along the X-axis.
     """
 
     debug: bool = False
     font_size: float = 6.0
-    labels: bool | None = None
+    label: Label = field(default_factory=Label)
     name: str = ''
-    scoops: bool | None = None
-    full_scoop: bool | dict | Scoop = False
+    scoop: Scoop = field(default_factory=Scoop)
     slots: DoublyLinkedList[Slot] = field(default_factory=DoublyLinkedList)
     width: float = 0.0
     _y: float = 0.0
-
-    def __post_init__(self) -> None:
-        Scoop.check_keys(self.full_scoop, f"row '{self.name}'")
 
     @property
     def font_spacing(self) -> float:
@@ -80,8 +77,23 @@ class Row:
 
     @property
     def has_labels(self) -> bool:
-        """Whether any slot in the row draws a label."""
-        return any(slot.draws_label for slot in self.slots)
+        """Whether the row draws any label: its own or any of its slots'."""
+        return self.has_row_label or any(slot.draws_label for slot in self.slots)
+
+    @property
+    def has_row_label(self) -> bool:
+        """Whether the row has one label for all its slots."""
+        return self.label.mode is LabelMode.ROW_LABEL and not self.label.is_empty
+
+    @property
+    def has_slot_scoops(self) -> bool:
+        """Whether any slot in the row has its own scoop."""
+        return any(slot.scoop.mode is ScoopMode.SLOT_SCOOP for slot in self.slots)
+
+    @property
+    def has_row_scoop(self) -> bool:
+        """Whether the row has one scoop across all its slots."""
+        return self.scoop.mode is ScoopMode.ROW_SCOOP
 
     @property
     def height(self) -> float:
@@ -172,13 +184,12 @@ class Row:
 
     def add_slot(self, slot: Slot) -> Slot:
         slot.font_size = self.font_size
-        if slot.label is not None:
-            slot.label.font_size = self.font_size
+        slot.label.font_size = self.font_size
         slot.debug = self.debug
-        if slot.scoops is None:
-            slot.scoops = self.scoops
-        if slot.labels is None:
-            slot.labels = self.labels
+        if self.has_row_scoop:
+            slot.scoop = self.scoop
+        if self.has_row_label:
+            slot.label = self.label
         self.slots.append(slot)
         return slot
 
@@ -192,10 +203,19 @@ class Row:
             mode=Mode.ADD
         )
 
-    def built_scoop(self, x_block_width: float) -> Scoop:
-        """The full-row scoop to be drawn."""
-        spec = None if self.full_scoop is True else self.full_scoop
-        return Scoop.resolve(spec, self.default_scoop(x_block_width))
+    def build_label(self, top_face) -> None:
+        """Emboss the row label centered under the row's slots."""
+        if self.has_row_label and len(self):
+            self.label.build(top_face, (self.x_scoop, self.y_label))
+
+    def build_scoop(self, coords: tuple, x_block_width: float) -> None:
+        """Build the row scoop."""
+        if not self.has_row_scoop or not len(self):
+            return
+        self.scoop.fill_unset(self.default_scoop(x_block_width))
+        self.scoop.log_scoop_creation(coords)
+        with Locations(coords):
+            self.scoop.build(Mode.ADD if self.debug else Mode.SUBTRACT)
 
     def default_scoop(self, x_block_width: float) -> Scoop:
         """Single-row scoop across its slots' X-footprint, depth of its largest slot radius."""
@@ -207,15 +227,12 @@ class Row:
         # only take default width if it doesn't touch/exceed the edges
         scoop_wall_width = min(max_wall_width, SCOOP_WALL_WIDTH)
 
-        logger.debug(f'[!] default_scoop(): x_block_width: {x_block_width}')
-        logger.debug(f'[!] default_scoop(): max_wall_width: {max_wall_width}')
-        logger.debug(f'[!] default_scoop(): scoop_wall_width: {scoop_wall_width}')
-
         return Scoop(
             flat_width=self.x_scoop_span,
             wall_width=scoop_wall_width,
             depth=radius,
-            length=self.y_max_slot/2
+            length=self.y_max_slot/2,
+            mode=ScoopMode.ROW_SCOOP
         )
 
     def __iter__(self) -> Iterator[Slot]:
@@ -247,8 +264,6 @@ class StorageBlock:
         name (str, optional): storage block name. Defaults to inputted YAML filename.
         type (StorageBlockType): slot layout, rowed (default) or positional.
         font_size (float): default label font size for every row/slot.
-        scoops (bool, optional): default for rows/slots that don't set their own.
-        labels (bool, optional): same as scoops; labels are drawn if nothing sets it.
         x (float): storage block dimensions along the X-axis in GFU.
         y (float): storage block dimensions along the Y-axis in GFU.
         z (float): storage block height in GFU.
@@ -264,8 +279,6 @@ class StorageBlock:
     name: str = ''
     type: StorageBlockType = StorageBlockType.ROWED
     font_size: float = 6.0
-    scoops: bool | None = None
-    labels: bool | None = None
     rows: DoublyLinkedList[Row] = field(default_factory=DoublyLinkedList)
     x: float = 0.0
     y: float = 0.0
@@ -355,16 +368,12 @@ class StorageBlock:
     def add_row(self, row: Row) -> Row:
         logger.debug(f'add_row(): {len(row)} slots')
         row.debug = self.debug
-        if row.scoops is None:
-            row.scoops = self.scoops
-        if row.labels is None:
-            row.labels = self.labels
         for slot in row.slots:
             slot.debug = self.debug
-            if slot.scoops is None:
-                slot.scoops = row.scoops
-            if slot.labels is None:
-                slot.labels = row.labels
+            if row.has_row_scoop:
+                slot.scoop = row.scoop
+            if row.has_row_label:
+                slot.label = row.label
         self.rows.append(row)
         return row
 
@@ -385,40 +394,13 @@ class StorageBlock:
             with Locations(coords):
                 row.build_row_marker(self.x_mm)
 
-    def build_label(self, top_face, row: Row, slot: Slot) -> None:
-        # generate label
-        label_coords = (
-            slot.x,
-            row.y_label
-        )
-        slot.label.log_label_creation(label_coords)
-        with BuildSketch(top_face) as label, Locations(label_coords):
-            slot.label.build()
-        extrude(label.sketch, amount=1.0)
-
     def build_row_scoop(self, row: Row, surface_z: float) -> None:
-        """Generate a Scoop across an entire Row."""
-        scoop = row.built_scoop(self.x_mm)
-        scoop_coords = (
-            row.x_scoop,
-            row.y_scoop,
-            surface_z
-        )
-        l = f'building full-row scoop {scoop} at {tuple(round(c, 3) for c in scoop_coords)}'
-        logger.debug(l)
-        with Locations(scoop_coords):
-            scoop.build(Mode.ADD if self.debug else Mode.SUBTRACT)
+        """Generate the Scoop across an entire Row, if it has one."""
+        row.build_scoop((row.x_scoop, row.y_scoop, surface_z), self.x_mm)
 
     def build_slot_scoop(self, row: Row, slot: Slot, surface_z: float) -> None:
-        """Generate a Scoop for a single slot."""
-        scoop_coords = (
-            slot.x,
-            row.y_scoop,
-            surface_z
-        )
-        with Locations(scoop_coords):
-            slot.built_scoop().log_scoop_creation(scoop_coords)
-            slot.built_scoop().build(slot.built_mode)
+        """Generate a single slot's own Scoop, if it has one."""
+        slot.build_scoop((slot.x, row.y_scoop, surface_z))
 
     def build_slot(self, slot: Slot, surface_z: float) -> None:
         """Generate a single slot."""
@@ -442,18 +424,18 @@ class StorageBlock:
         if self.debug:
             self.build_row_markers(surface_z)
         for row in self.rows:
+            logger.debug(f'build(): Row with x_slot_spacing {row.x_slot_spacing}')
             for slot in row.slots:
                 self.build_slot(slot, surface_z)
 
-                if labels and slot.draws_label:
-                    self.build_label(top_face, row, slot)
+                if labels:
+                    slot.build_label(top_face, (slot.x, row.y_label))
 
-                # row scoops render slot scoops redundant
-                if slot.scoops and not row.full_scoop:
-                    self.build_slot_scoop()
+                self.build_slot_scoop(row, slot, surface_z)
 
-            if row.full_scoop and len(row):
-                self.build_row_scoop(row, surface_z)
+            if labels:
+                row.build_label(top_face)
+            self.build_row_scoop(row, surface_z)
 
     def build_test_surface(self, part) -> None:
         """Build mock storage block surface without expensive gf generation call.
@@ -489,6 +471,7 @@ class StorageBlock:
 
     def validate(self) -> None:
         self.validate_x_bounds()
+        self.validate_x_spacing()
         self.validate_y_bounds()
         logger.info('[+] SurfaceBlock X/Y validation passed.')
 
@@ -502,8 +485,14 @@ class StorageBlock:
         l = f'[+] SurfaceBlock X validation passed: {self.x_max_footprint} < {self.x_mm}'
         logger.debug(l)
 
+    def validate_x_spacing(self) -> None:
+        for row in self.rows:
+            if row.x_slot_spacing < 10.0:
+                l = f'[!] WARNING: row.x_slot_spacing {round(row.x_slot_spacing, 2)} < 10mm'
+                logger.warning(l)
+
     def validate_y_bounds(self) -> None:
-        """Validate the Row's slots do not exceed the StorageBlock's height on the Y-axis."""
+        """Check if combined rows exceed StorageBlock's height on the Y-axis."""
         # TODO --> assume a reasonable margin so slots don't overlap
         if self.y_footprint > self.y_mm:
             e = f'Y-BOUNDS: footprint {self.y_footprint} exceeds block height {self.y_mm}'
@@ -540,6 +529,9 @@ class StorageBlock:
         return len(self.rows)
 
 
+# TODO --> all of this to its own file. io.py? load.py?
+
+
 def _gfu_from_config(
         data: dict[str, Any],
         axis: str,
@@ -547,11 +539,11 @@ def _gfu_from_config(
         built_mm: float,
         round_up: bool
     ) -> float | None:
-    """ Read one storage block dimension in GFU, given as either '<axis>' (GFU) or '<axis>_mm'.
+    """Read one storage block dimension in GFU, given as either '<axis>' (GFU) or '<axis>_mm'.
 
-    --> If round_up, mm values convert using the nominal unit size (StorageBlock rounds them up.)
-    --> Otherwise they convert using the built unit size, so <axis>_mm is drawn exactly as given.
-    --> Returns None if the dimension isn't given."""
+    If round_up, mm values convert using the nominal unit size (StorageBlock rounds them up.)
+    Otherwise they convert using the built unit size, so <axis>_mm is drawn exactly as given.
+    """
 
     gfu, mm = data.get(axis), data.get(axis + '_mm')
     if gfu is not None and mm is not None:
@@ -570,27 +562,11 @@ def load_storage_block(
         y: int | None = None,
         z: float | None = None,
         debug: bool = False,
-        labels: bool | None = None
+        no_labels: bool = False
     ) -> StorageBlock:
-    """ Build a StorageBlock and its Rows from a parsed YAML config.
-
-    --> Storage block settings live under an optional top-level 'storage_block' object: 'name',
-        'type' ('rowed' or 'positional', default rowed), 'font_size' (default label size for
-        every row/slot), each dimension as either GFU ('x', 'y', 'z') or mm ('x_mm', 'y_mm',
-        'z_mm'), and 'global' (defaults for every slot, see load_rows).
-    --> 'round_to_gfu_x'/'_y'/'_z' round that dimension up to whole units ('round_to_gfu_all' sets
-        all three); unrounded dimensions are built exactly as given.
-    --> name/block_type/x/y/z arguments (e.g. from the CLI) override the YAML values.
-    --> debug is passed down to every Row and Slot.
-    --> labels (e.g. False from --no-labels) overrides the 'global' labels value; rows/slots that
-        set their own still win.
-    --> Missing dimensions are left at 0."""
+    """Build a StorageBlock and its Rows from a parsed YAML config."""
 
     block_data = data.get('storage_block', {})
-    if labels is not None:
-        # override 'global' so load_rows applies it to slots too
-        block_data = {**block_data, 'global': {**block_data.get('global', {}), 'labels': labels}}
-        data = {**data, 'storage_block': block_data}
     unknown = set(block_data) - set(STORAGE_BLOCK_KEYS)
     if unknown:
         raise ValueError('[!] storage_block: unknown key(s): {}'.format(', '.join(sorted(unknown))))
@@ -616,14 +592,17 @@ def load_storage_block(
         name=name or block_data.get('name', ''),
         type=block_type or block_data.get('type', StorageBlockType.ROWED),
         font_size=block_data.get('font_size', StorageBlock.font_size),
-        scoops=block_data.get('global', {}).get('scoops'),
-        labels=block_data.get('global', {}).get('labels'),
         x=float(dims['x'] or 0.0),
         y=float(dims['y'] or 0.0),
         z=float(dims['z'] or 0.0),
         **rounding
     )
     for row in load_rows(data, font_size=block.font_size):
+        if no_labels:
+            # after loading, so no row/slot 'labels' setting can turn them back on
+            row.label.mode = LabelMode.NO_LABEL
+            for slot in row:
+                slot.label.mode = LabelMode.NO_LABEL
         block.add_row(row)
     return block
 
@@ -636,10 +615,9 @@ def load_storage_block_from_path(
         y: int | None = None,
         z: float | None = None,
         debug: bool = False,
-        labels: bool | None = None
+        no_labels: bool = False
     ) -> StorageBlock:
-    """Build a StorageBlock from a YAML file. The name defaults to the filename if not set in the
-    YAML."""
+    """Build StorageBlock from YAML config. Name defaults to filename if not set in config."""
     logger.info(f'loading storage block from {path}')
     with open(path) as f:
         block = load_storage_block(
@@ -650,54 +628,125 @@ def load_storage_block_from_path(
             y=y,
             z=z,
             debug=debug,
-            labels=labels
+            no_labels=no_labels
         )
     if not block.name:
         block.name = os.path.splitext(os.path.basename(path))[0]
     return block
 
 
+def _slot_scoop(slot: Slot, spec: Any, owner: str) -> Scoop:
+    """A slot's scoop from its 'slot_scoop' YAML value: false/missing -> none, true -> the slot's
+    default, a mapping -> the default with those dimensions overridden.
+    """
+    if not spec:
+        return Scoop()
+    Scoop.check_keys(spec, owner)
+    scoop = slot.default_scoop()
+    for key, value in (spec if isinstance(spec, dict) else {}).items():
+        setattr(scoop, key, value)
+    return scoop
+
+
+def _row_scoop(row: Row, spec: Any) -> Scoop:
+    """A row's scoop from its 'row_scoop' YAML value: false/missing -> none, true -> defaults, a
+    mapping -> those dimensions overridden.
+
+    depth/length come from the row's slots now so validation can run before the build;
+    flat_width/wall_width need the slot layout and are filled in at build time (Row.build_scoop.)
+    """
+    if not spec:
+        return Scoop()
+    Scoop.check_keys(spec, f"row '{row.name}'")
+    scoop = Scoop(
+        depth=max((slot.scaled_radius for slot in row.slots), default=0.0),
+        length=row.y_max_slot / 2,
+        mode=ScoopMode.ROW_SCOOP
+    )
+    for key, value in (spec if isinstance(spec, dict) else {}).items():
+        setattr(scoop, key, value)
+    return scoop
+
+
 def _slot_from_config(config: dict[str, Any]) -> Slot:
-    """Build a Slot from its merged config, turning label text (e.g. '6' or 6) into a Label."""
+    """Build a Slot from its merged config, turning label text (e.g. '6' or 6) into a Label and
+    'slot_scoop' into a Scoop.
+    """
+    config = dict(config)
+    scoop_spec = config.pop('slot_scoop', False)
+    # labels: false (global/row/slot) turns labels off; otherwise label text gives a SLOT_LABEL
+    show_labels = config.pop('labels', None) is not False
     label = config.get('label')
-    if label is not None and not isinstance(label, Label):
-        config = {**config, 'label': Label(label_text=str(label), font_size=config['font_size'])}
-    return Slot(**config)
+    if not isinstance(label, Label):
+        text = '' if label is None else str(label)
+        mode = LabelMode.SLOT_LABEL if text and show_labels else LabelMode.NO_LABEL
+        config['label'] = Label(label_text=text, font_size=config['font_size'], mode=mode)
+    slot = Slot(**config)
+    slot.scoop = _slot_scoop(slot, scoop_spec, f"slot '{label}'")
+    return slot
 
 
 def load_rows(data: dict[str, Any], font_size: float = 6.0) -> list[Row]:
-    """ Build Rows from a parsed YAML config.
+    """Build Rows from a parsed YAML config.
 
     --> Slots are grouped under 'rows', each with its own 'slots' list and an
         optional 'name'; a top-level 'slots' list is loaded as a single row.
-    --> 'storage_block' 'global' keys (e.g. shape, scoops) are defaults for every slot
+    --> 'storage_block' 'global' keys (e.g. shape, slot_scoop) are defaults for every slot
     --> Other row-level keys are defaults for that row's slots
     --> Values set on an individual slot override both.
+    --> 'slot_scoop' (global/row/slot): true, a mapping of Scoop dimensions, or false to opt out.
+    --> 'row_scoop' (global/row): true or a mapping; one scoop across the row, shared by all its
+        slots in place of their own scoops.
+    --> 'label' (slot): text for the slot's own label; 'row_label' (row): text for one label
+        centered under the row, shared by its slots in place of their own; 'labels: false'
+        (global/row/slot) turns labels off.
     --> font_size is the default label size (e.g. the storage block's); each row reserves space
-        for its largest label."""
+        for its largest label.
+    """
 
     unknown = set(data) - {'storage_block', 'rows', 'slots'}
     if unknown:
         raise ValueError('[!] unknown top-level key(s): {} (slot defaults go in storage_block.global)'
                          .format(', '.join(sorted(unknown))))
     defaults = {'font_size': font_size, **data.get('storage_block', {}).get('global', {})}
+    # row_scoop is a row setting, so it isn't passed down to slots
+    default_row_scoop = defaults.pop('row_scoop', False)
     rows_data = data['rows'] if 'rows' in data else [{'slots': data['slots']}]
     rows = []
     for row_data in rows_data:
         row_defaults = {
-            key: value for key, value in row_data.items() if key not in ('name', 'slots', 'full_scoop')
+            key: value for key, value in row_data.items()
+            if key not in ('name', 'slots', 'row_scoop', 'row_label')
         }
         slots = [
             _slot_from_config({**defaults, **row_defaults, **slot}) for slot in row_data['slots']
         ]
-        rows.append(Row(
+        row = Row(
             font_size=max((slot.font_size for slot in slots), default=defaults['font_size']),
             name=row_data.get('name', ''),
-            scoops=row_defaults.get('scoops', defaults.get('scoops')),
-            labels=row_defaults.get('labels', defaults.get('labels')),
-            full_scoop=row_data.get('full_scoop', False),
             slots=DoublyLinkedList(slots)
-        ))
+        )
+        row_label = row_data.get('row_label')
+        if row_label is not None and row_defaults.get('labels', defaults.get('labels')) is not False:
+            row.label = Label(
+                label_text=str(row_label), font_size=row.font_size, mode=LabelMode.ROW_LABEL
+            )
+        if row.has_row_label:
+            replaced = [slot for slot in slots if slot.draws_label]
+            if replaced:
+                logger.warning(f"row '{row.name}': row_label replaces {len(replaced)} slot label(s)")
+            # share one Label, like a row scoop
+            for slot in slots:
+                slot.label = row.label
+        row.scoop = _row_scoop(row, row_data.get('row_scoop', default_row_scoop))
+        if row.has_row_scoop:
+            explicit = [slot for slot, raw in zip(slots, row_data['slots']) if raw.get('slot_scoop')]
+            if explicit:
+                logger.warning(f"row '{row.name}': row_scoop replaces {len(explicit)} slot_scoop(s)")
+            # share one Scoop so build-time filling reaches every slot
+            for slot in slots:
+                slot.scoop = row.scoop
+        rows.append(row)
     return rows
 
 
@@ -721,13 +770,7 @@ def load_slots_from_path(path: str | os.PathLike[str]) -> list[Slot]:
 
 
 def main() -> None:
-    logger.info('Starting')
-    block = StorageBlock(name='block-1')
-    row = block.add_row(Row(name='row-1'))
-    row.add_slot(
-        Slot(label=Label(label_text='M3'), shape=Shape.PRISM_HEXA, diameter=12.0, depth=20.0)
-    )
-    logger.info(f'Built {block.name} with {len(block)} row(s)')
+    pass
 
 
 if __name__ == '__main__':

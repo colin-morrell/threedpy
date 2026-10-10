@@ -68,24 +68,19 @@ def labeled_bin(x: int, y: int, z: int, txt: str):
 
 
 def build_work_surface(block: StorageBlock, arrange: bool = False) -> None:
-    """ Build the block's body: a gridfinity box, or a plain box if arranging or X/Y aren't whole
-    GFU (gridfinity bases only come in whole units.)"""
-    if not arrange and block.is_gridfinity:
-        build_gf_box(int(block.x_gfu), int(block.y_gfu), block.z_gfu)
-        return
+    """Build the block's body, with or without gridfinity base."""
     if not arrange:
-        logger.warning(f'x/y ({block.x_gfu} x {block.y_gfu} GFU) not whole units: building a plain box, no gridfinity base'
-                        )
+        if block.is_gridfinity:
+            build_gf_box(int(block.x_gfu), int(block.y_gfu), block.z_gfu)
+            return
+        l = f'{block.x_gfu} x {block.y_gfu} GFU not whole units: building plain block'
+        logger.warning(l)
     with Locations((0,0,0)):
         block.build_test_surface(rowed_storage_block)
 
 
 def positional_storage_block(block: StorageBlock, arrange: bool=False):
-    """ Generate a gridfinity box with manually-specified positions for each slot.
-
-    --> Does not currently support labels.
-    --> arrange: skips time-expensive call to build gridfinity base, good for fine-tuning
-    """
+    """ Generate a StorageBlock with manually-specified positions for each slot."""
 
     # TODO --> bounds checks
 
@@ -106,13 +101,7 @@ def rowed_storage_block(
         arrange: bool = False,
         y_row_offset: float = 0.0
     ):
-    """ Generate a gridfinity socket (etc) storage block with equally spaced rows of slots and
-        optional corresponding labels.
-
-    --> arrange: for fine-tuning arrangement of the slots. skips time-expensive call to build
-        gridfinity base.
-    --> labels: embossed below (-Y) each slot unless its labels setting is False.
-    """
+    """Generate a StorageBlock with equally spaced rows of slots + optional features."""
 
     if (block.x_gfu == 0 or block.y_gfu == 0 or block.z_gfu == 0):
         raise ValueError('[!] x/y/z must be > 0')
@@ -122,13 +111,9 @@ def rowed_storage_block(
     with BuildPart() as part:
         build_work_surface(block, arrange=arrange)
 
-        # determine each row's Y-position
         block.y_align_rows()
-
-        # per row, determine each slot's X-position
         block.x_align_slots()
 
-        # face of working surface on which label text will (optionally) be drawn + extruded
         top_face = part.faces().sort_by(Axis.Z)[-1]
         block.build(top_face=top_face)
 
@@ -136,18 +121,16 @@ def rowed_storage_block(
 
 
 def generate_storage_block(block: StorageBlock, arrange: bool = False):
-    """ Generate a storage block using the layout given by its type.
-
-    --> labels: only applies to rowed storage blocks (positional doesn't support labels yet.)
-    """
+    """Generate a StorageBlock using the layout given by its type."""
     if block.type == StorageBlockType.POSITIONAL:
         return positional_storage_block(block, arrange=arrange)
-    return rowed_storage_block(block, arrange=arrange)
+    if block.type == StorageBlockType.ROWED:
+        return rowed_storage_block(block, arrange=arrange)
+    raise ValueError(f'[!] invalid StorageBlockType: {block.type}')
 
 
 def storage_block_from_args(args: argparse.Namespace, in_path: str) -> StorageBlock:
-    """Build a StorageBlock from the input YAML, with any type/x/y/z given on the command
-    line overriding the YAML's 'storage_block' settings."""
+    """Build a StorageBlock from the input YAML. CLI args override YAML settings."""
     block = load_storage_block_from_path(
         in_path,
         block_type=args.type,
@@ -155,12 +138,12 @@ def storage_block_from_args(args: argparse.Namespace, in_path: str) -> StorageBl
         y=args.y,
         z=args.z,
         debug=args.draw_solids,
-        labels=False if args.no_labels else None
+        no_labels=args.no_labels
     )
     missing = [axis for axis in ('x', 'y', 'z') if not getattr(block, axis)]
     if missing:
-        sys.exit('[!] {}: no {} dimension(s) in the YAML "storage_block" mapping or on the command line'
-                 .format(in_path, '/'.join(missing)))
+        err = '[!] {}: missing {} dimension(s)'.format(in_path, '/'.join(missing)))
+        sys.exit(err)
     return block
 
 
@@ -175,8 +158,7 @@ def block_names(in_paths: list[str]) -> list[str]:
 
 
 def show_in_column(parts: list, names: list[str]) -> None:
-    """Show the parts in a column along Y (first in front) in one call, so auto_clear
-    (default) removes everything shown earlier."""
+    """Show generated parts in a column (Y). Uses one call so auto_clear refreshes old objects."""
     shown, y = [], 0.0
     for part in parts:
         bb = part.part.bounding_box()
@@ -194,12 +176,12 @@ def export_parts(parts: list, names: list[str], out_dir: str) -> None:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description='Generate gridfinity storage blocks and fitment tests.')
+    parser = argparse.ArgumentParser(description='Generate gridfinity StorageBlocks.')
     subparsers = parser.add_subparsers(dest='command', required=True)
 
     build = subparsers.add_parser(
         'build',
-        help='storage block laid out by its YAML config (rowed or positional)'
+        help='StorageBlock laid out by its YAML config (rowed or positional)'
     )
     build.add_argument(
         'in_paths', nargs='+', metavar='PATH',
@@ -233,27 +215,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     build.add_argument(
         '--no-labels',
         action='store_true',
-        help='skip embossed slot labels, except rows/slots that set labels: true (rowed only)'
+        help='skip every embossed label, whatever the YAML sets (rowed only)'
     )
-
-    scale = subparsers.add_parser('scale-test', help='test fitments for a diameter at several scales')
-    scale.add_argument('diameter', type=float, help='slot diameter (mm)')
-    scale.add_argument('depth', type=float, help='slot depth (mm)')
-    scale.add_argument(
-        '-o', '--out',
-        dest='out_path',
-        metavar='DIR',
-        required=True,
-        help='directory to export STLs into'
-    )
-    scale.add_argument(
-        '-s', '--scales',
-        type=float,
-        nargs='+',
-        default=[1.01, 1.02, 1.03],
-        help='scale factors to test (default: 1.01 1.02 1.03)'
-    )
-    scale.add_argument('--no-show', action='store_true', help='skip the yacv preview')
 
     return parser.parse_args(argv)
 
@@ -272,13 +235,6 @@ def configure_logging(debug: bool) -> None:
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     configure_logging(getattr(args, 'debug', False))
-
-    """
-    if args.command == 'scale-test':
-        os.makedirs(args.out_path, exist_ok=True)
-        scale_test(args.diameter, args.depth, args.out_path, args.scales, preview=not args.no_show)
-        return
-    """
 
     names = block_names(args.in_paths)
     blocks = [storage_block_from_args(args, path) for path in args.in_paths]
