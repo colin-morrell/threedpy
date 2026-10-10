@@ -142,7 +142,7 @@ def storage_block_from_args(args: argparse.Namespace, in_path: str) -> StorageBl
     )
     missing = [axis for axis in ('x', 'y', 'z') if not getattr(block, axis)]
     if missing:
-        err = '[!] {}: missing {} dimension(s)'.format(in_path, '/'.join(missing)))
+        err = '[!] {}: missing {} dimension(s)'.format(in_path, '/'.join(missing))
         sys.exit(err)
     return block
 

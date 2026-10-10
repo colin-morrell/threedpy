@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-import yaml
 from build123d import (
     Align,
     Box,
@@ -14,6 +13,7 @@ from build123d import (
     Mode,
 )
 
+import yaml
 from threedpy.constants import (
     CONFIG_PATH,
     GFU_GRID,
@@ -24,7 +24,7 @@ from threedpy.constants import (
     SCOOP_WALL_WIDTH,
     STORAGE_BLOCK_KEYS,
 )
-from threedpy.features import Label, LabelMode, Scoop, ScoopMode, Shape, Slot
+from threedpy.features import Label, LabelMode, Scoop, ScoopMode, Slot
 from threedpy.util import DoublyLinkedList
 
 
