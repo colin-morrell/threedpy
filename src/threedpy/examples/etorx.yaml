@@ -10,7 +10,6 @@ storage_block:
     # applies to every row/slot unless overwritten in that row/slot
     global:
         shape: 'round_vert'
-        scale: 1.02
 slots:
     - {diameter: 11.7, depth: 10, label: 'E4'}
     - {diameter: 11.7, depth: 10, label: 'E5'}
