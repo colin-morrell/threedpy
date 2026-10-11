@@ -3,12 +3,14 @@ import math
 import os
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import Enum, Flag, auto
 from typing import Any
 
 from build123d import (
     Align,
+    Axis,
     Box,
+    BuildPart,
     Locations,
     Mode,
 )
@@ -19,13 +21,12 @@ from threedpy.constants import (
     GFU_GRID,
     GFU_GRID_NOMINAL,
     GFU_HEIGHT,
-    ROUND_KEYS,
     SCOOP_FILLET_RADIUS,
     SCOOP_WALL_WIDTH,
     STORAGE_BLOCK_KEYS,
 )
 from threedpy.features import Label, LabelMode, Scoop, ScoopMode, Slot
-from threedpy.util import DoublyLinkedList
+from threedpy.util import DoublyLinkedList, build_gf_bin, build_gf_box
 
 
 def load_config() -> dict[str, Any]:
@@ -48,6 +49,16 @@ class StorageBlockType(Enum):
 
     POSITIONAL = 'positional'
     ROWED = 'rowed'
+
+
+class RoundAxis(Flag):
+    """Dimensions to round up to a whole number of GFU."""
+
+    NONE = 0
+    X = auto()
+    Y = auto()
+    Z = auto()
+    ALL = X | Y | Z
 
 
 @dataclass
@@ -144,7 +155,7 @@ class Row:
         return self._y
 
     @y.setter
-    def y(self, val: float) -> float:
+    def y(self, val: float) -> None:
         self._y = val
 
     @property
@@ -176,7 +187,7 @@ class Row:
         return self.y
 
     @property
-    def z_max(self) -> float:
+    def z_max(self) -> float | None:
         # TODO --> max depth for vert slots
         # TODO --> max radius for horz slots
         # TODO --> will require slots to dynamically know their Z
@@ -199,7 +210,7 @@ class Row:
             width,
             1,
             1,
-            align=(Align.CENTER, Align.CENTER),
+            align=(Align.CENTER, Align.CENTER, Align.MIN),
             mode=Mode.ADD
         )
 
@@ -213,7 +224,7 @@ class Row:
         if not self.has_row_scoop or not len(self):
             return
         self.scoop.fill_unset(self.default_scoop(x_block_width))
-        self.scoop.log_scoop_creation(coords)
+        self.scoop.log_build(coords)
         with Locations(coords):
             self.scoop.build(Mode.ADD if self.debug else Mode.SUBTRACT)
 
@@ -243,6 +254,51 @@ class Row:
 
 
 @dataclass
+class StorageBin:
+    """StorageBin"""
+
+    # TODO --> support scoop/noscoop
+    # TODO --> support labeltab/nolabeltab
+
+    debug: bool = False
+    name: str = ''
+    label: Label = field(default_factory=Label)
+    font_size: float = 6.0
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+    round_to_gfu: RoundAxis = RoundAxis.NONE
+
+    def build(self, _: bool=True):
+        """Iterate through all slots of all rows and build their specified shapes and features.
+
+        Slots and scoops are placed relative to top_face's height when given. z_mm assumes the
+        body starts at Z=0, but a gridfinity base extends below it (its top is 2.5mm lower).
+        """
+        with BuildPart() as part:
+            self.log_build()
+            self.validate()
+
+            _bin = build_gf_bin(int(self.x), int(self.y), int(self.z))
+            top_face = part.faces().sort_by(Axis.Z)[-1]
+
+            if self.debug:
+                pass
+
+            self.label.build(top_face, (0,0,0))
+
+            return part
+
+    def log_build(self) -> None:
+        # TODO
+        pass
+
+    def validate(self) -> None:
+        # TODO --> label text bounds check on X/Y
+        pass
+
+
+@dataclass
 class StorageBlock:
     """StorageBlock
 
@@ -255,7 +311,7 @@ class StorageBlock:
 
     Dimensions are primarily intended to fit the gridfinity standard (https://gridfinity.xyz/)
     using gridfinity units (GFU), but dimensions can also be given in mm and built as given. If X/Y
-    aren't whole GFU, a plain box is built instead of the gridfinity base (see is_gridfinity.)
+    aren't whole GFU, a plain box is built instead of the gridfinity base.
 
     GFU grid (X/Y) specifications are 42mm per unit (not including tolerances.)
     GFU height (Z) specification is 7mm per unit (not including tolerances.)
@@ -267,15 +323,14 @@ class StorageBlock:
         x (float): storage block dimensions along the X-axis in GFU.
         y (float): storage block dimensions along the Y-axis in GFU.
         z (float): storage block height in GFU.
-        round_to_gfu_x/y/z (bool): round that dimension up to a whole number of GFU. Otherwise
-            it's built as given (a gridfinity base needs whole X/Y; see is_gridfinity.)
-        round_to_gfu_all (bool): sets all three round_to_gfu_* options.
+        round_to_gfu (RoundAxis): dimensions to round up to whole GFU number.
     """
 
     # TODO --> auto allocate slots given # rows
     # TODO --> auto allocate slots/rows given GFU
 
     debug: bool = False
+    no_labels: bool = False
     name: str = ''
     type: StorageBlockType = StorageBlockType.ROWED
     font_size: float = 6.0
@@ -283,19 +338,14 @@ class StorageBlock:
     x: float = 0.0
     y: float = 0.0
     z: float = 0.0
-    round_to_gfu_x: bool = False
-    round_to_gfu_y: bool = False
-    round_to_gfu_z: bool = False
-    round_to_gfu_all: bool = False
+    round_to_gfu: RoundAxis = RoundAxis.NONE
 
     def __post_init__(self) -> None:
         if not isinstance(self.type, StorageBlockType):
             self.type = StorageBlockType(self.type)
-        if self.round_to_gfu_all:
-            self.round_to_gfu_x = self.round_to_gfu_y = self.round_to_gfu_z = True
-        for axis in ('x', 'y', 'z'):
-            if getattr(self, 'round_to_gfu_' + axis):
-                # round() first so float error (e.g. 84 / 42 = 2.0000000001) doesn't add a unit
+        for axis, flag in (('x', RoundAxis.X), ('y', RoundAxis.Y), ('z', RoundAxis.Z)):
+            if flag in self.round_to_gfu:
+                # round() first so float error doesn't add a unit
                 setattr(self, axis, math.ceil(round(getattr(self, axis), 6)))
 
     @property
@@ -409,35 +459,57 @@ class StorageBlock:
             slot.y,
             surface_z - slot.z
         )
-        slot.log_slot_creation(coords)
+        slot.log_build(coords)
         with Locations(coords):
             slot.build()
 
-    def build(self, labels: bool=True, top_face=None):
+    def build(self, arrange: bool=False):
         """Iterate through all slots of all rows and build their specified shapes and features.
 
         Slots and scoops are placed relative to top_face's height when given. z_mm assumes the
         body starts at Z=0, but a gridfinity base extends below it (its top is 2.5mm lower).
         """
-        self.validate()
-        surface_z = top_face.center().Z if top_face is not None else self.z_mm
-        if self.debug:
-            self.build_row_markers(surface_z)
-        for row in self.rows:
-            logger.debug(f'build(): Row with x_slot_spacing {row.x_slot_spacing}')
-            for slot in row.slots:
-                self.build_slot(slot, surface_z)
+        with BuildPart() as part:
+            self.log_build()
+            self.build_base(arrange)
+            top_face = part.faces().sort_by(Axis.Z)[-1]
 
-                if labels:
-                    slot.build_label(top_face, (slot.x, row.y_label))
+            if self.type == StorageBlockType.ROWED:
+                self.y_align_rows()
+                self.x_align_slots()
 
-                self.build_slot_scoop(row, slot, surface_z)
+            self.validate()
+            surface_z = top_face.center().Z if top_face is not None else self.z_mm
+            if self.debug:
+                self.build_row_markers(surface_z)
 
-            if labels:
-                row.build_label(top_face)
-            self.build_row_scoop(row, surface_z)
+            for row in self.rows:
+                logger.debug(f'build(): Row with x_slot_spacing {row.x_slot_spacing}')
+                for slot in row.slots:
+                    self.build_slot(slot, surface_z)
 
-    def build_test_surface(self, part) -> None:
+                    if not self.no_labels:
+                        slot.build_label(top_face, (slot.x, row.y_label))
+
+                    self.build_slot_scoop(row, slot, surface_z)
+
+                if not self.no_labels:
+                    row.build_label(top_face)
+                self.build_row_scoop(row, surface_z)
+
+            return part
+
+    def build_base(self, arrange: bool = False):
+        if not arrange:
+            if self.is_gridfinity:
+                build_gf_box(int(self.x_gfu), int(self.y_gfu), int(self.z_gfu))
+                return
+            msg = f'{self.x_gfu} x {self.y_gfu} is_gridfinity() failed: building plain block'
+            logger.critical(msg)
+        with Locations((0,0,0)):
+            self.build_base_plain()
+
+    def build_base_plain(self) -> None:
         """Build mock storage block surface without expensive gf generation call.
 
         Useful for faster testing/fine-tuning row/slot arrangement.
@@ -446,10 +518,10 @@ class StorageBlock:
             self.x_mm,
             self.y_mm,
             self.z_mm,
-            align=(Align.CENTER, Align.CENTER)
+            align=(Align.CENTER, Align.CENTER, Align.MIN)
         )
 
-    def log_storage_block_creation(self) -> None:
+    def log_build(self) -> None:
         logger.debug('-'*25)
         logger.debug('[!] BUILDING STORAGE BLOCK [!]')
         logger.debug(f'|           type: {self.type.value}')
@@ -480,7 +552,7 @@ class StorageBlock:
         # TODO --> automatically account for scoop/no scoop
         # TODO --> assume a reasonable margin so slots don't overlap
         if self.x_max_footprint > self.x_mm:
-            e = f'Y-BOUNDS: footprint {self.x.max_footprint} exceeds block width {self.x_mm}'
+            e = f'Y-BOUNDS: footprint {self.x_max_footprint} exceeds block width {self.x_mm}'
             raise ValueError(e)
         l = f'[+] SurfaceBlock X validation passed: {self.x_max_footprint} < {self.x_mm}'
         logger.debug(l)
@@ -554,6 +626,17 @@ def _gfu_from_config(
     return gfu
 
 
+def _round_axes(spec: Any) -> RoundAxis:
+    """The 'round_to_gfu' YAML value ('all', 'x', or a list like ['x', 'y']) as a RoundAxis."""
+    flags = RoundAxis.NONE
+    for name in [spec] if isinstance(spec, str) else (spec or []):
+        try:
+            flags |= RoundAxis[str(name).upper()]
+        except KeyError:
+            raise ValueError(f"[!] storage_block: round_to_gfu: unknown axis '{name}'") from None
+    return flags
+
+
 def load_storage_block(
         data: dict[str, Any],
         name: str = '',
@@ -571,16 +654,13 @@ def load_storage_block(
     if unknown:
         raise ValueError('[!] storage_block: unknown key(s): {}'.format(', '.join(sorted(unknown))))
 
-    rounding = {key: bool(block_data.get(key, False)) for key in ROUND_KEYS}
-    round_all = rounding['round_to_gfu_all']
+    round_to_gfu = _round_axes(block_data.get('round_to_gfu'))
     dims = {
-        axis: _gfu_from_config(
-            block_data, axis, nominal, built, round_all or rounding['round_to_gfu_' + axis]
-        )
-        for axis, nominal, built in (
-            ('x', GFU_GRID_NOMINAL, GFU_GRID),
-            ('y', GFU_GRID_NOMINAL, GFU_GRID),
-            ('z', GFU_HEIGHT, GFU_HEIGHT)
+        axis: _gfu_from_config(block_data, axis, nominal, built, flag in round_to_gfu)
+        for axis, nominal, built, flag in (
+            ('x', GFU_GRID_NOMINAL, GFU_GRID, RoundAxis.X),
+            ('y', GFU_GRID_NOMINAL, GFU_GRID, RoundAxis.Y),
+            ('z', GFU_HEIGHT, GFU_HEIGHT, RoundAxis.Z)
         )
     }
     for axis, override in (('x', x), ('y', y), ('z', z)):
@@ -589,13 +669,14 @@ def load_storage_block(
 
     block = StorageBlock(
         debug=debug,
+        no_labels=no_labels,
         name=name or block_data.get('name', ''),
-        type=block_type or block_data.get('type', StorageBlockType.ROWED),
+        type=StorageBlockType(block_type or block_data.get('type', StorageBlockType.ROWED)),
         font_size=block_data.get('font_size', StorageBlock.font_size),
         x=float(dims['x'] or 0.0),
         y=float(dims['y'] or 0.0),
         z=float(dims['z'] or 0.0),
-        **rounding
+        round_to_gfu=round_to_gfu
     )
     for row in load_rows(data, font_size=block.font_size):
         if no_labels:
