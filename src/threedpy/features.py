@@ -91,27 +91,26 @@ class Scoop:
     and extruded along the Y axis.
     """
 
-    flat_width: float | None = None
-    wall_width: float | None = None
-    depth: float | None = None
-    length: float | None = None
+    flat_width: float = 0
+    wall_width: float = 0
+    depth: float = 0
+    length: float = 0
     fillet_radius: float = SCOOP_FILLET_RADIUS
     mode: ScoopMode = ScoopMode.NONE
 
     @property
     def width(self) -> float:
         """Total width on the X-axis at the rim (usually the block surface.)"""
-        return self.flat_width + 2 * self.wall_width
+        if self.flat_width and self.wall_width:
+            return self.flat_width + 2 * self.wall_width
+        else:
+            err = f'[!] Scoop.width(): flat_width: {self.flat_width}; wall_width: {self.wall_width}'
+            raise ValueError(err)
 
-    def build(self, build_mode: Mode = Mode.SUBTRACT) -> BasePartObject | None:
+    def build(self, build_mode: Mode = Mode.SUBTRACT) -> BasePartObject:
         """Build the scoop at the current location."""
 
-        if self.mode is ScoopMode.NONE:
-            return None
-        unset = [f.name for f in fields(self) if getattr(self, f.name) is None]
-        if unset:
-            e = f'[!] {self.mode.value} scoop has unset dimension(s): {", ".join(unset)}'
-            raise ValueError(e)
+        self.validate()
 
         half_flat = self.flat_width / 2
         floor = -self.depth
@@ -132,6 +131,14 @@ class Scoop:
         if build_mode == Mode.SUBTRACT and self.fillet_radius > 0:
             self.fillet_rim(scoop)
         return scoop
+
+    def validate(self):
+        if self.mode is ScoopMode.NONE:
+            raise ValueError('[!] Scoop.build() called with ScoopMode.NONE')
+        unset = [f.name for f in fields(self) if getattr(self, f.name) == 0]
+        if unset:
+            e = f'[!] {self.mode.value} scoop has unset dimension(s): {", ".join(unset)}'
+            raise ValueError(e)
 
     def fillet_rim(self, scoop: BasePartObject) -> None:
         """Round the edges where the just-cut scoop meets the top surface.
@@ -188,12 +195,12 @@ class Scoop:
         )
 
     def fill_unset(self, default: 'Scoop') -> None:
-        """Fill any unset (None) dimension(s) from default, in place."""
+        """Fill any unset (0) dimension(s) from default, in place."""
         for f in fields(self):
-            if getattr(self, f.name) is None:
+            if getattr(self, f.name) == 0:
                 setattr(self, f.name, getattr(default, f.name))
 
-    def log_scoop_creation(self, coords: tuple) -> None:
+    def log_build(self, coords: tuple) -> None:
         logger.debug('-'*25)
         logger.debug('[!] BUILDING SCOOP [!]')
         logger.debug('|   coords: x={}, y={}, z={}'.format(*(round(c, 3) for c in coords)))
@@ -214,6 +221,7 @@ class Scoop:
 class LabelMode(Enum):
     """What a Label belongs to."""
 
+    BIN_LABEL = 'bin_label'
     SLOT_LABEL = 'slot_label'
     ROW_LABEL = 'row_label'
     NO_LABEL = None
@@ -232,24 +240,34 @@ class Label:
     mode: LabelMode = LabelMode.NO_LABEL
 
     @property
+    def alignment(self) -> tuple:
+        match self.mode:
+            case LabelMode.BIN_LABEL:
+                return (Align.CENTER, Align.MIN)
+            case LabelMode.ROW_LABEL | LabelMode.SLOT_LABEL:
+                return (Align.CENTER, Align.CENTER)
+            case _:
+                raise ValueError(f'label.alignment() called with LabelMode={self.mode}')
+
+    @property
     def is_empty(self) -> bool:
         return bool(not self.label_text)
 
     def build(self, top_face, coords: tuple) -> None:
         if self.mode is LabelMode.NO_LABEL or self.is_empty:
             return
-        self.log_label_creation(coords)
+        self.log_build(coords)
 
         with BuildSketch(top_face) as label, Locations(coords):
             Text(
                 self.label_text,
                 font_size=self.font_size,
                 font_path=FONT_PATH,
-                align=(Align.CENTER, Align.CENTER)
+                align=self.alignment
             )
         extrude(label.sketch, amount=1.0)
 
-    def log_label_creation(self, coords: tuple) -> None:
+    def log_build(self, coords: tuple) -> None:
         logger.debug('[!] BUILDING LABEL @ x={} y={}'.format(*(round(c, 3) for c in coords)))
 
 
@@ -301,7 +319,7 @@ class Slot:
         return Mode.ADD
 
     @property
-    def built_rotation(self) -> int:
+    def built_rotation(self) -> tuple[int,int,int]:
         if self.shape == Shape.ROUND_HORZ:
             return (90, 0, 0)
         return (0, 0, 0)
@@ -362,7 +380,7 @@ class Slot:
                 self.width,
                 self.length,
                 self.depth,
-                align=(Align.CENTER, Align.MIN),  # if the latter is CENTER, y=0
+                align=self.built_align,
                 mode=Mode.SUBTRACT
             )
         else:
@@ -375,7 +393,7 @@ class Slot:
     def build_scoop(self, coords: tuple) -> None:
         if self.scoop.mode is not ScoopMode.SLOT_SCOOP:
             return
-        self.scoop.log_scoop_creation(coords)
+        self.scoop.log_build(coords)
         with Locations(coords):
             self.scoop.build(self.built_mode)
 
@@ -389,7 +407,7 @@ class Slot:
             mode=ScoopMode.SLOT_SCOOP
         )
 
-    def log_slot_creation(self, coords: tuple) -> None:
+    def log_build(self, coords: tuple) -> None:
         logger.debug('-'*25)
         logger.debug('[!] BUILDING SLOT [!]')
         logger.debug(f'|    label: {self.label if self.draws_label else None}')
