@@ -104,9 +104,8 @@ rows:
 `rowed` (rows evenly spaced along Y, slots evenly spaced along X; the default) or `positional` (each
 slot at its own `x`/`y`). `font_size` is the default label size; rows and slots can set their own.
 Give each dimension in gridfinity units (`x`, `y`, `z`) or in mm (`x_mm`, `y_mm`, `z_mm`), not both.
-Dimensions are built as given unless `round_to_gfu_x`, `round_to_gfu_y` or `round_to_gfu_z` is
-`true`, which rounds that dimension up to whole units (42mm for X/Y, 7mm for Z); `round_to_gfu_all`
-sets all three. The gridfinity base needs whole X/Y units, so otherwise a plain box is built. The
+Dimensions are built as given unless listed in `round_to_gfu` (`x`, `y`, `z`, a list like
+`[x, y]`, or `all`), which rounds them up to whole units (42mm for X/Y, 7mm for Z). The gridfinity base needs whole X/Y units, so otherwise a plain box is built. The
 name defaults to the filename.
 
 `global` keys are defaults for every slot, row-level keys are defaults for that row's slots, and
