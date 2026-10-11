@@ -1,5 +1,8 @@
 line-length = 100
 output-format = 'concise'
 
+[lint]
+extend-select = ['ARG']
+
 [format]
 quote-style = 'single'
