@@ -23,6 +23,7 @@ SLOT_DEPTH_CLEARANCE: float = 0.25
 SLOT_DIAMETER_CLEARANCE: float = 0.25
 
 """ Scoops """
+# TODO --> min row-scoop width (10-12mm??)
 # Scoop X-axis defaults
 SCOOP_FLAT_WIDTH: float = 10.0
 SCOOP_WALL_WIDTH: float = 7.5
@@ -31,11 +32,10 @@ SCOOP_LENGTH: float = 20.0
 SCOOP_FILLET_RADIUS: float = 2.5
 
 """ yacv preview """
-# Y gap between blocks when previewing several in yacv (mm)
+# gap between blocks when previewing several in yacv (mm)
 PREVIEW_GAP: float = 10.0
 
 """ storageBlock """
-ROUND_KEYS = ('round_to_gfu_x', 'round_to_gfu_y', 'round_to_gfu_z', 'round_to_gfu_all')
 STORAGE_BLOCK_KEYS = (
-    'name', 'type', 'font_size', 'x', 'y', 'z', 'x_mm', 'y_mm', 'z_mm', 'global', *ROUND_KEYS
+    'name', 'type', 'font_size', 'x', 'y', 'z', 'x_mm', 'y_mm', 'z_mm', 'global', 'round_to_gfu'
 )
