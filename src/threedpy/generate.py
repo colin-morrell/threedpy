@@ -4,26 +4,19 @@ import os
 import sys
 
 from build123d import (
-    Align,
-    Axis,
-    BuildPart,
-    BuildSketch,
     Location,
-    Locations,
-    Mode,
-    Text,
-    extrude,
 )
 from yacv_server import show
 
-from threedpy.constants import FONT_PATH, PREVIEW_GAP
+from threedpy.constants import PREVIEW_GAP
 from threedpy.storage import (
+    StorageBin,
     StorageBlock,
     StorageBlockType,
     load_config,
     load_storage_block_from_path,
 )
-from threedpy.util import build_gf_bin, build_gf_box, export_as_stl
+from threedpy.util import export_as_stl
 
 # yacv preview colors from config.yaml; unset keys fall back to yacv's defaults
 # re-read on every %run since this module is re-executed but threedpy.storage isn't
@@ -35,98 +28,8 @@ logger = logging.getLogger(__name__)
 # %%
 
 
-def labeled_bins(txts: list):
-
-    for l in txts:
-        _bin = labeled_bin(l)
-        filename = l.split()[0]
-        export_path = f'/mnt/e/3dp/gf/bins/custom/bolts/{filename}.stl'
-        export_as_stl(_bin, export_path)
-
-
-def labeled_bin(x: int, y: int, z: int, txt: str):
-
-    with BuildPart() as gf_bin:
-        _bin = build_gf_bin(1, 1, 5)
-        top_face = gf_bin.faces().sort_by(Axis.Z)[-1]
-
-        label_x: int = 0
-        label_y: int = 0
-
-        with BuildSketch(top_face), Locations((label_x, label_y, 0)):
-            Text(txt,
-                 font_size=6,
-                 font_path=FONT_PATH,
-                 align=(Align.CENTER, Align.MIN),
-                 rotation=0
-                 )
-
-        extrude(amount=1, mode=Mode.ADD)
-        show(gf_bin, **SHOW_KWARGS)
-
-        return gf_bin
-
-
-def build_work_surface(block: StorageBlock, arrange: bool = False) -> None:
-    """Build the block's body, with or without gridfinity base."""
-    if not arrange:
-        if block.is_gridfinity:
-            build_gf_box(int(block.x_gfu), int(block.y_gfu), block.z_gfu)
-            return
-        l = f'{block.x_gfu} x {block.y_gfu} GFU not whole units: building plain block'
-        logger.warning(l)
-    with Locations((0,0,0)):
-        block.build_test_surface(rowed_storage_block)
-
-
-def positional_storage_block(block: StorageBlock, arrange: bool=False):
-    """ Generate a StorageBlock with manually-specified positions for each slot."""
-
-    # TODO --> bounds checks
-
-    block.log_storage_block_creation()
-
-    with BuildPart() as part:
-        build_work_surface(block, arrange=arrange)
-
-        # TODO --> test meh
-        top_face = part.faces().sort_by(Axis.Z)[-1]
-        block.build(labels=False, top_face=top_face)
-
-    return part
-
-
-def rowed_storage_block(
-        block: StorageBlock,
-        arrange: bool = False,
-        y_row_offset: float = 0.0
-    ):
-    """Generate a StorageBlock with equally spaced rows of slots + optional features."""
-
-    if (block.x_gfu == 0 or block.y_gfu == 0 or block.z_gfu == 0):
-        raise ValueError('[!] x/y/z must be > 0')
-
-    block.log_storage_block_creation()
-
-    with BuildPart() as part:
-        build_work_surface(block, arrange=arrange)
-
-        block.y_align_rows()
-        block.x_align_slots()
-
-        top_face = part.faces().sort_by(Axis.Z)[-1]
-        block.build(top_face=top_face)
-
-    return part
-
-
-def generate_storage_block(block: StorageBlock, arrange: bool = False):
-    """Generate a StorageBlock using the layout given by its type."""
-    if block.type == StorageBlockType.POSITIONAL:
-        return positional_storage_block(block, arrange=arrange)
-    if block.type == StorageBlockType.ROWED:
-        return rowed_storage_block(block, arrange=arrange)
-    raise ValueError(f'[!] invalid StorageBlockType: {block.type}')
+def build_part(part: StorageBin|StorageBlock, arrange: bool = False):
+    return part.build(arrange)
 
 
 def storage_block_from_args(args: argparse.Namespace, in_path: str) -> StorageBlock:
@@ -143,17 +46,18 @@ def storage_block_from_args(args: argparse.Namespace, in_path: str) -> StorageBl
     missing = [axis for axis in ('x', 'y', 'z') if not getattr(block, axis)]
     if missing:
         err = '[!] {}: missing {} dimension(s)'.format(in_path, '/'.join(missing))
-        sys.exit(err)
+        raise ValueError(err)
     return block
 
 
 def block_names(in_paths: list[str]) -> list[str]:
     """yacv object and STL names: each input's file name minus its extension."""
     names = [os.path.splitext(os.path.basename(path))[0] for path in in_paths]
-    duplicates = sorted({name for name in names if names.count(name) > 1})
-    if duplicates:
+    unique = set(names)
+    if len(names) > len(unique):
         # yacv would replace one with the other, and their STLs would overwrite each other
-        sys.exit('[!] input files share a name: {}'.format(', '.join(duplicates)))
+        err = '[!] input contains duplicate file names:\n\t{}'.format('\n\t'.join(in_paths))
+        raise ValueError(err)
     return names
 
 
@@ -254,7 +158,7 @@ def main(argv: list[str] | None = None) -> None:
 
     names = block_names(args.in_paths)
     blocks = [storage_block_from_args(args, path) for path in args.in_paths]
-    parts = [generate_storage_block(block, arrange=args.arrange) for block in blocks]
+    parts = [build_part(block, arrange=args.arrange) for block in blocks]
 
     if not args.no_show:
         (show_in_row if args.row else show_in_column)(parts, names)
