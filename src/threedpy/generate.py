@@ -168,6 +168,17 @@ def show_in_column(parts: list, names: list[str]) -> None:
     show(*shown, names=names, **SHOW_KWARGS)
 
 
+def show_in_row(parts: list, names: list[str]) -> None:
+    """Show generated parts in a row (X). Uses one call so auto_clear refreshes old objects."""
+    shown, x = [], 0.0
+    for part in parts:
+        bb = part.part.bounding_box()
+        # moved copies for the preview; exports stay at the origin
+        shown.append(part.part.moved(Location((x - bb.min.X, 0, 0))))
+        x += bb.size.X + PREVIEW_GAP
+    show(*shown, names=names, **SHOW_KWARGS)
+
+
 def export_parts(parts: list, names: list[str], out_dir: str) -> None:
     """Export each part to <out_dir>/<name>.stl."""
     os.makedirs(out_dir, exist_ok=True)
@@ -206,6 +217,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help='use a plain box instead of the (slow) gridfinity base, for arranging slots'
     )
     build.add_argument('--no-show', action='store_true', help='skip the yacv preview')
+    arrangement = build.add_mutually_exclusive_group()
+    arrangement.add_argument(
+        '--column', action='store_true', help='preview blocks in a column along Y (default)'
+    )
+    arrangement.add_argument('--row', action='store_true', help='preview blocks in a row along X')
     build.add_argument(
         '--draw-solids',
         action='store_true',
@@ -215,7 +231,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     build.add_argument(
         '--no-labels',
         action='store_true',
-        help='skip every embossed label, whatever the YAML sets (rowed only)'
+        help='skip embossed labels'
     )
 
     return parser.parse_args(argv)
@@ -241,7 +257,7 @@ def main(argv: list[str] | None = None) -> None:
     parts = [generate_storage_block(block, arrange=args.arrange) for block in blocks]
 
     if not args.no_show:
-        show_in_column(parts, names)
+        (show_in_row if args.row else show_in_column)(parts, names)
     if args.out:
         out_dir = CONFIG.get('out_dir')
         if not out_dir:
