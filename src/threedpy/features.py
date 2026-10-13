@@ -29,9 +29,9 @@ from build123d import (
 
 from threedpy.constants import (
     FONT_PATH,
-    SCOOP_FILLET_RADIUS,
-    SCOOP_LENGTH,
-    SCOOP_WALL_WIDTH,
+    SLOT_SCOOP_FILLET_RADIUS,
+    SLOT_SCOOP_LENGTH,
+    SLOT_SCOOP_WALL_WIDTH,
     SLOT_DEPTH_CLEARANCE,
     SLOT_DIAMETER_CLEARANCE,
 )
@@ -61,8 +61,8 @@ class Shape(Enum):
     ROUND_VERT = 'round_vert'
 
 
-class ScoopMode(Enum):
-    """What a Scoop belongs to, or NONE for no scoop (Scoop.build() then does nothing.)"""
+class SlotScoopMode(Enum):
+    """What a SlotScoop belongs to, or NONE for no scoop (SlotScoop.build() then does nothing.)"""
 
     NONE = None
     SLOT_SCOOP = 'slot_scoop'
@@ -70,8 +70,8 @@ class ScoopMode(Enum):
 
 
 @dataclass
-class Scoop:
-    """Scoop
+class SlotScoop:
+    """SlotScoop
 
     A finger scoop cut into the top surface to make items easier to grab.
 
@@ -81,12 +81,12 @@ class Scoop:
         depth (float): Z-axis dimension: how far the scoop extends below the surface.
         length (float): Y-axis dimension.
         fillet_radius (float): rounds the rim where the scoop meets the surface; 0 = sharp.
-        mode (ScoopMode): what the scoop belongs to; NONE = no scoop.
+        mode (SlotScoopMode): what the scoop belongs to; NONE = no scoop.
 
     Dimensions left as None are filled in by its owner (see fill_unset), e.g. a row scoop's
     flat_width/wall_width, which depend on where the row's slots end up.
 
-    Scoop extends a straight line outward from center (X) by half the flat_width. It then follows
+    SlotScoop extends a straight line outward from center (X) by half the flat_width. It then follows
     a quadratic Bezier to create a parabola up (+Z) to the rim (surface). It's then mirrored across
     and extruded along the Y axis.
     """
@@ -95,8 +95,8 @@ class Scoop:
     wall_width: float = 0
     depth: float = 0
     length: float = 0
-    fillet_radius: float = SCOOP_FILLET_RADIUS
-    mode: ScoopMode = ScoopMode.NONE
+    fillet_radius: float = SLOT_SCOOP_FILLET_RADIUS
+    mode: SlotScoopMode = SlotScoopMode.NONE
 
     @property
     def width(self) -> float:
@@ -104,7 +104,7 @@ class Scoop:
         if self.flat_width and self.wall_width:
             return self.flat_width + 2 * self.wall_width
         else:
-            err = f'[!] Scoop.width(): flat_width: {self.flat_width}; wall_width: {self.wall_width}'
+            err = f'[!] SlotScoop.width(): flat_width: {self.flat_width}; wall_width: {self.wall_width}'
             raise ValueError(err)
 
     def build(self, build_mode: Mode = Mode.SUBTRACT) -> BasePartObject:
@@ -133,8 +133,8 @@ class Scoop:
         return scoop
 
     def validate(self):
-        if self.mode is ScoopMode.NONE:
-            raise ValueError('[!] Scoop.build() called with ScoopMode.NONE')
+        if self.mode is SlotScoopMode.NONE:
+            raise ValueError('[!] SlotScoop.build() called with SlotScoopMode.NONE')
         unset = [f.name for f in fields(self) if getattr(self, f.name) == 0]
         if unset:
             e = f'[!] {self.mode.value} scoop has unset dimension(s): {", ".join(unset)}'
@@ -194,7 +194,7 @@ class Scoop:
             f'scoop rim fillet (radius {self.fillet_radius}) failed, leaving it sharp'
         )
 
-    def fill_unset(self, default: 'Scoop') -> None:
+    def fill_unset(self, default: 'SlotScoop') -> None:
         """Fill any unset (0) dimension(s) from default, in place."""
         for f in fields(self):
             if getattr(self, f.name) == 0:
@@ -202,7 +202,7 @@ class Scoop:
 
     def log_build(self, coords: tuple) -> None:
         logger.debug('-'*25)
-        logger.debug('[!] BUILDING SCOOP [!]')
+        logger.debug('[!] BUILDING SLOT_SCOOP [!]')
         logger.debug('|   coords: x={}, y={}, z={}'.format(*(round(c, 3) for c in coords)))
         logger.debug(f'|   flat_w: {round(self.flat_width, 3)}')
         logger.debug(f'|   wall_w: {round(self.wall_width, 3)}')
@@ -210,7 +210,7 @@ class Scoop:
 
     @classmethod
     def check_keys(cls, spec: Any, owner: str) -> None:
-        """Raise on mapping keys that aren't Scoop fields, so YAML typos fail at load time."""
+        """Raise on mapping keys that aren't SlotScoop fields, so YAML typos fail at load time."""
         if isinstance(spec, dict):
             unknown = set(spec) - {f.name for f in fields(cls)}
             if unknown:
@@ -243,7 +243,7 @@ class Label:
     def alignment(self) -> tuple:
         match self.mode:
             case LabelMode.BIN_LABEL:
-                return (Align.CENTER, Align.MIN)
+                return (Align.CENTER, Align.CENTER)
             case LabelMode.ROW_LABEL | LabelMode.SLOT_LABEL:
                 return (Align.CENTER, Align.CENTER)
             case _:
@@ -258,7 +258,7 @@ class Label:
             return
         self.log_build(coords)
 
-        with BuildSketch(top_face) as label, Locations(coords):
+        with BuildSketch(Plane.XY.offset(top_face.center().Z)) as label, Locations(coords):
             Text(
                 self.label_text,
                 font_size=self.font_size,
@@ -286,7 +286,7 @@ class Slot:
     debug: bool = False
     label: Label = field(default_factory=Label)
     shape: Shape = Shape.ROUND_VERT  # TODO --> default to None
-    scoop: Scoop = field(default_factory=Scoop)
+    scoop: SlotScoop = field(default_factory=SlotScoop)
     diameter: float = 0.0
     depth: float = 0.0
     font_size: float = 6.0
@@ -391,20 +391,19 @@ class Slot:
             self.label.build(top_face, coords)
 
     def build_scoop(self, coords: tuple) -> None:
-        if self.scoop.mode is not ScoopMode.SLOT_SCOOP:
+        if self.scoop.mode is not SlotScoopMode.SLOT_SCOOP:
             return
         self.scoop.log_build(coords)
         with Locations(coords):
             self.scoop.build(self.built_mode)
 
-    def default_scoop(self) -> Scoop:
+    def default_scoop(self) -> SlotScoop:
         """Single-slot scoop: flat bottom width of slot, as deep as its radius."""
-        return Scoop(
+        return SlotScoop(
             flat_width=self.scaled_diameter,
-            wall_width=SCOOP_WALL_WIDTH,
+            wall_width=SLOT_SCOOP_WALL_WIDTH,
             depth=self.scaled_radius,
-            length=SCOOP_LENGTH,
-            mode=ScoopMode.SLOT_SCOOP
+            length=SLOT_SCOOP_LENGTH,
         )
 
     def log_build(self, coords: tuple) -> None:

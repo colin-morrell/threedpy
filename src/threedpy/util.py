@@ -133,24 +133,13 @@ def build_gf_base(grid_x: int, grid_y: int):
     return base
 
 
-def build_gf_bin(grid_x: int, grid_y: int, z: int):
-    """Generate gridfinity bin with scoop+label given x/y/z. All in gf units."""
-
-    base = build_gf_base(grid_x, grid_y)
-    gf_bin = Bin(
-        base,
-        compartments=CompartmentsEqual(
-            div_x=grid_x,
-            compartment_list=Compartment(features=[Label(), Scoop(radius=15)]),
-        ),
-        height_in_units=z
-    )
-    return gf_bin
-
 def build_gf_box(grid_x: int, grid_y: int, grid_z: int):
     """Generate solid gridfinity box given x/y/z. All in gf units."""
 
+    logger.info('build_gf_box(): building gf base...')
     base = build_gf_base(grid_x, grid_y)
+
+    logger.info('build_gf_box(): building gf box...')
     gf_box = Bin(
         base,
         height_in_units=grid_z

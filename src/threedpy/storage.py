@@ -14,6 +14,13 @@ from build123d import (
     Locations,
     Mode,
 )
+from gridfinity_build123d import (
+    Bin,
+    Compartment,
+    CompartmentsEqual,
+    Scoop,
+)
+from gridfinity_build123d import Label as BinLabel
 
 import yaml
 from threedpy.constants import (
@@ -21,12 +28,15 @@ from threedpy.constants import (
     GFU_GRID,
     GFU_GRID_NOMINAL,
     GFU_HEIGHT,
-    SCOOP_FILLET_RADIUS,
-    SCOOP_WALL_WIDTH,
+    LABEL_TAB_WIDTH,
+    SLOT_SCOOP_FILLET_RADIUS,
+    SLOT_SCOOP_WALL_WIDTH,
+    SCOOP_RADIUS,
+    STORAGE_BIN_KEYS,
     STORAGE_BLOCK_KEYS,
 )
-from threedpy.features import Label, LabelMode, Scoop, ScoopMode, Slot
-from threedpy.util import DoublyLinkedList, build_gf_bin, build_gf_box
+from threedpy.features import Label, LabelMode, SlotScoop, SlotScoopMode, Slot
+from threedpy.util import DoublyLinkedList, build_gf_base, build_gf_box
 
 
 def load_config() -> dict[str, Any]:
@@ -75,7 +85,7 @@ class Row:
     font_size: float = 6.0
     label: Label = field(default_factory=Label)
     name: str = ''
-    scoop: Scoop = field(default_factory=Scoop)
+    scoop: SlotScoop = field(default_factory=SlotScoop)
     slots: DoublyLinkedList[Slot] = field(default_factory=DoublyLinkedList)
     width: float = 0.0
     _y: float = 0.0
@@ -99,12 +109,12 @@ class Row:
     @property
     def has_slot_scoops(self) -> bool:
         """Whether any slot in the row has its own scoop."""
-        return any(slot.scoop.mode is ScoopMode.SLOT_SCOOP for slot in self.slots)
+        return any(slot.scoop.mode is SlotScoopMode.SLOT_SCOOP for slot in self.slots)
 
     @property
     def has_row_scoop(self) -> bool:
         """Whether the row has one scoop across all its slots."""
-        return self.scoop.mode is ScoopMode.ROW_SCOOP
+        return self.scoop.mode is SlotScoopMode.ROW_SCOOP
 
     @property
     def height(self) -> float:
@@ -228,22 +238,22 @@ class Row:
         with Locations(coords):
             self.scoop.build(Mode.ADD if self.debug else Mode.SUBTRACT)
 
-    def default_scoop(self, x_block_width: float) -> Scoop:
+    def default_scoop(self, x_block_width: float) -> SlotScoop:
         """Single-row scoop across its slots' X-footprint, depth of its largest slot radius."""
 
         radius = max((slot.scaled_radius for slot in self.slots), default=0.0)
         # extend the scoop walls all the way to the edges (w/ .5 margin) on X-axis
-        edge_margin = SCOOP_FILLET_RADIUS + 0.5
+        edge_margin = SLOT_SCOOP_FILLET_RADIUS + 0.5
         max_wall_width = (x_block_width - self.x_scoop_span) / 2 - edge_margin
         # only take default width if it doesn't touch/exceed the edges
-        scoop_wall_width = min(max_wall_width, SCOOP_WALL_WIDTH)
+        scoop_wall_width = min(max_wall_width, SLOT_SCOOP_WALL_WIDTH)
 
-        return Scoop(
+        return SlotScoop(
             flat_width=self.x_scoop_span,
             wall_width=scoop_wall_width,
             depth=radius,
             length=self.y_max_slot/2,
-            mode=ScoopMode.ROW_SCOOP
+            mode=SlotScoopMode.ROW_SCOOP
         )
 
     def __iter__(self) -> Iterator[Slot]:
@@ -262,12 +272,13 @@ class StorageBin:
 
     debug: bool = False
     name: str = ''
-    label: Label = field(default_factory=Label)
+    label: BinLabel = field(default_factory=BinLabel)
     font_size: float = 6.0
-    x: float = 0.0
-    y: float = 0.0
-    z: float = 0.0
+    x: int = 0
+    y: int = 0
+    z: int = 0
     round_to_gfu: RoundAxis = RoundAxis.NONE
+    scoop_radius: float = SCOOP_RADIUS
 
     def build(self, _: bool=True):
         """Iterate through all slots of all rows and build their specified shapes and features.
@@ -279,15 +290,35 @@ class StorageBin:
             self.log_build()
             self.validate()
 
-            _bin = build_gf_bin(int(self.x), int(self.y), int(self.z))
+            logger.info('StorageBin.build(): building gf base...')
+            base = build_gf_base(self.x, self.y)
+
+            logger.info('StorageBin.build(): building gf bin...')
+            _bin = Bin(
+                base,
+                compartments=CompartmentsEqual(
+                    #div_x=self.x,
+                    #div_y=self.y,
+                    compartment_list=Compartment(
+                        features=[BinLabel(), Scoop(radius=self.scoop_radius)]
+                    ),
+                ),
+                height_in_units=self.z
+            )
+
             top_face = part.faces().sort_by(Axis.Z)[-1]
 
             if self.debug:
                 pass
 
-            self.label.build(top_face, (0,0,0))
+            self.label.build(top_face, self.label_tab_center(top_face))
 
             return part
+
+    @staticmethod
+    def label_tab_center(top_face) -> tuple[float, float]:
+        opening = top_face.inner_wires()[0].bounding_box()
+        return ((opening.min.X + opening.max.X) / 2, opening.max.Y + LABEL_TAB_WIDTH / 2)
 
     def log_build(self) -> None:
         # TODO
@@ -295,7 +326,32 @@ class StorageBin:
 
     def validate(self) -> None:
         # TODO --> label text bounds check on X/Y
-        pass
+        logger.info('StorageBin.validate(): validating params...')
+        self.validate_gfu()
+        self.validate_label_z()
+        self.validate_scoop_radius()
+
+    def validate_gfu(self) -> None:
+        partial = [axis for axis in ('x', 'y', 'z') if not float(getattr(self, axis)).is_integer()]
+        if partial:
+            raise ValueError(
+                '[!] storage_bin {}: {} must be whole GFU'.format(self.name, '/'.join(partial))
+            )
+
+    def validate_label_z(self) -> None:
+        if self.label.mode is not None and self.z < 3:
+            raise ValueError(f'[!] storage_bin {self.name}: label tab requires Z > 2')
+
+    def validate_scoop_radius(self) -> None:
+        z_top: float = 7 * self.z - 2.5
+        depth: float = z_top - 5.3
+        max_rad: float = depth - 0.1
+
+        if self.scoop_radius > max_rad:
+            logger.warning(
+                f'[!] compartment depth > requested scoop rad, falling back to max_rad: {max_rad}'
+            )
+            self.scoop_radius = max_rad
 
 
 @dataclass
@@ -445,11 +501,11 @@ class StorageBlock:
                 row.build_row_marker(self.x_mm)
 
     def build_row_scoop(self, row: Row, surface_z: float) -> None:
-        """Generate the Scoop across an entire Row, if it has one."""
+        """Generate the SlotScoop across an entire Row, if it has one."""
         row.build_scoop((row.x_scoop, row.y_scoop, surface_z), self.x_mm)
 
     def build_slot_scoop(self, row: Row, slot: Slot, surface_z: float) -> None:
-        """Generate a single slot's own Scoop, if it has one."""
+        """Generate a single slot's own SlotScoop, if it has one."""
         slot.build_scoop((slot.x, row.y_scoop, surface_z))
 
     def build_slot(self, slot: Slot, surface_z: float) -> None:
@@ -716,20 +772,95 @@ def load_storage_block_from_path(
     return block
 
 
-def _slot_scoop(slot: Slot, spec: Any, owner: str) -> Scoop:
+def load_storage_bin(
+        data: dict[str, Any],
+        name: str = '',
+        font_size: float = 6.0,
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+        debug: bool = False,
+        no_labels: bool = False
+    ) -> StorageBin:
+    """Build a StorageBin from a parsed YAML config."""
+
+    unknown = set(data) - {'storage_bin'}
+    if unknown:
+        raise ValueError('[!] unknown top-level key(s) with storage_bin: {}'
+                         .format(', '.join(sorted(unknown))))
+    bin_data = data.get('storage_bin') or {}
+    unknown = set(bin_data) - set(STORAGE_BIN_KEYS)
+    if unknown:
+        raise ValueError('[!] storage_bin: unknown key(s): {}'.format(', '.join(sorted(unknown))))
+
+    dims = {
+        axis: bin_data.get(axis) if override is None else override
+        for axis, override in (('x', x), ('y', y), ('z', z))
+    }
+    label = Label(
+        font_size=bin_data.get('font_size', font_size),
+        label_text=str(bin_data.get('label', '')),
+        mode=LabelMode.NO_LABEL if no_labels else LabelMode.BIN_LABEL
+    )
+    return StorageBin(
+        debug=debug,
+        name=name,
+        label=label,
+        x=dims['x'] or 0,
+        y=dims['y'] or 0,
+        z=dims['z'] or 0
+    )
+
+
+def load_from_path(
+        path: str | os.PathLike[str],
+        name: str = '',
+        block_type: StorageBlockType | str | None = None,
+        x: int | None = None,
+        y: int | None = None,
+        z: float | None = None,
+        debug: bool = False,
+        no_labels: bool = False
+    ) -> StorageBin | StorageBlock:
+    """Build a StorageBin or StorageBlock from YAML config, picked by its top-level keys. Name
+    defaults to filename if not set in config.
+    """
+    logger.info(f'loading {path}')
+    with open(path) as f:
+        data = yaml.safe_load(f) or {}
+    part: StorageBin | StorageBlock
+    if 'storage_bin' in data:
+        part = load_storage_bin(data, name=name, x=x, y=y, z=z, debug=debug, no_labels=no_labels)
+    else:
+        part = load_storage_block(
+            data,
+            name=name,
+            block_type=block_type,
+            x=x,
+            y=y,
+            z=z,
+            debug=debug,
+            no_labels=no_labels
+        )
+    if not part.name:
+        part.name = os.path.splitext(os.path.basename(path))[0]
+    return part
+
+
+def _slot_scoop(slot: Slot, spec: Any, owner: str) -> SlotScoop:
     """A slot's scoop from its 'slot_scoop' YAML value: false/missing -> none, true -> the slot's
     default, a mapping -> the default with those dimensions overridden.
     """
     if not spec:
-        return Scoop()
-    Scoop.check_keys(spec, owner)
+        return SlotScoop()
+    SlotScoop.check_keys(spec, owner)
     scoop = slot.default_scoop()
     for key, value in (spec if isinstance(spec, dict) else {}).items():
         setattr(scoop, key, value)
     return scoop
 
 
-def _row_scoop(row: Row, spec: Any) -> Scoop:
+def _row_scoop(row: Row, spec: Any) -> SlotScoop:
     """A row's scoop from its 'row_scoop' YAML value: false/missing -> none, true -> defaults, a
     mapping -> those dimensions overridden.
 
@@ -737,12 +868,12 @@ def _row_scoop(row: Row, spec: Any) -> Scoop:
     flat_width/wall_width need the slot layout and are filled in at build time (Row.build_scoop.)
     """
     if not spec:
-        return Scoop()
-    Scoop.check_keys(spec, f"row '{row.name}'")
-    scoop = Scoop(
+        return SlotScoop()
+    SlotScoop.check_keys(spec, f"row '{row.name}'")
+    scoop = SlotScoop(
         depth=max((slot.scaled_radius for slot in row.slots), default=0.0),
         length=row.y_max_slot / 2,
-        mode=ScoopMode.ROW_SCOOP
+        mode=SlotScoopMode.ROW_SCOOP
     )
     for key, value in (spec if isinstance(spec, dict) else {}).items():
         setattr(scoop, key, value)
@@ -751,7 +882,7 @@ def _row_scoop(row: Row, spec: Any) -> Scoop:
 
 def _slot_from_config(config: dict[str, Any]) -> Slot:
     """Build a Slot from its merged config, turning label text (e.g. '6' or 6) into a Label and
-    'slot_scoop' into a Scoop.
+    'slot_scoop' into a SlotScoop.
     """
     config = dict(config)
     scoop_spec = config.pop('slot_scoop', False)
@@ -775,7 +906,7 @@ def load_rows(data: dict[str, Any], font_size: float = 6.0) -> list[Row]:
     --> 'storage_block' 'global' keys (e.g. shape, slot_scoop) are defaults for every slot
     --> Other row-level keys are defaults for that row's slots
     --> Values set on an individual slot override both.
-    --> 'slot_scoop' (global/row/slot): true, a mapping of Scoop dimensions, or false to opt out.
+    --> 'slot_scoop' (global/row/slot): true, a mapping of SlotScoop dimensions, or false to opt out.
     --> 'row_scoop' (global/row): true or a mapping; one scoop across the row, shared by all its
         slots in place of their own scoops.
     --> 'label' (slot): text for the slot's own label; 'row_label' (row): text for one label
@@ -785,7 +916,7 @@ def load_rows(data: dict[str, Any], font_size: float = 6.0) -> list[Row]:
         for its largest label.
     """
 
-    unknown = set(data) - {'storage_block', 'rows', 'slots'}
+    unknown = set(data) - {'storage_bin', 'storage_block', 'rows', 'slots'}
     if unknown:
         raise ValueError('[!] unknown top-level key(s): {} (slot defaults go in storage_block.global)'
                          .format(', '.join(sorted(unknown))))
@@ -824,7 +955,7 @@ def load_rows(data: dict[str, Any], font_size: float = 6.0) -> list[Row]:
             explicit = [slot for slot, raw in zip(slots, row_data['slots']) if raw.get('slot_scoop')]
             if explicit:
                 logger.warning(f"row '{row.name}': row_scoop replaces {len(explicit)} slot_scoop(s)")
-            # share one Scoop so build-time filling reaches every slot
+            # share one SlotScoop so build-time filling reaches every slot
             for slot in slots:
                 slot.scoop = row.scoop
         rows.append(row)

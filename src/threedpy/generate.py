@@ -14,14 +14,17 @@ from threedpy.storage import (
     StorageBlock,
     StorageBlockType,
     load_config,
-    load_storage_block_from_path,
+    load_from_path,
 )
 from threedpy.util import export_as_stl
 
 # yacv preview colors from config.yaml; unset keys fall back to yacv's defaults
 # re-read on every %run since this module is re-executed but threedpy.storage isn't
 CONFIG = load_config()
-SHOW_KWARGS = {key: CONFIG[key] for key in ('color_faces', 'color_edges') if CONFIG.get(key)}
+SHOW_KWARGS = {
+    'vertices': False,
+    **{key: CONFIG[key] for key in ('color_faces', 'color_edges') if CONFIG.get(key)}
+}
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +35,9 @@ def build_part(part: StorageBin|StorageBlock, arrange: bool = False):
     return part.build(arrange)
 
 
-def storage_block_from_args(args: argparse.Namespace, in_path: str) -> StorageBlock:
-    """Build a StorageBlock from the input YAML. CLI args override YAML settings."""
-    block = load_storage_block_from_path(
+def part_from_args(args: argparse.Namespace, in_path: str) -> StorageBin | StorageBlock:
+    """Build a StorageBin or StorageBlock from the input YAML. CLI args override YAML settings."""
+    part = load_from_path(
         in_path,
         block_type=args.type,
         x=args.x,
@@ -43,11 +46,11 @@ def storage_block_from_args(args: argparse.Namespace, in_path: str) -> StorageBl
         debug=args.draw_solids,
         no_labels=args.no_labels
     )
-    missing = [axis for axis in ('x', 'y', 'z') if not getattr(block, axis)]
+    missing = [axis for axis in ('x', 'y', 'z') if not getattr(part, axis)]
     if missing:
         err = '[!] {}: missing {} dimension(s)'.format(in_path, '/'.join(missing))
         raise ValueError(err)
-    return block
+    return part
 
 
 def block_names(in_paths: list[str]) -> list[str]:
@@ -91,21 +94,23 @@ def export_parts(parts: list, names: list[str], out_dir: str) -> None:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description='Generate gridfinity StorageBlocks.')
+    parser = argparse.ArgumentParser(
+        description='Generate gridfinity StorageBlocks and StorageBins.'
+    )
     subparsers = parser.add_subparsers(dest='command', required=True)
 
     build = subparsers.add_parser(
         'build',
-        help='StorageBlock laid out by its YAML config (rowed or positional)'
+        help='StorageBlock or StorageBin from its YAML config'
     )
     build.add_argument(
         'in_paths', nargs='+', metavar='PATH',
-        help='slot/row YAML file(s); several are built and shown in a column'
+        help='storage_block or storage_bin YAML file(s); several are built and shown in a column'
     )
     build.add_argument(
         '-t', '--type',
         choices=[block_type.value for block_type in StorageBlockType],
-        help='slot layout (overrides YAML; default: rowed)'
+        help='storage block slot layout (overrides YAML; default: rowed)'
     )
     build.add_argument('-x', type=int, help='width in gridfinity units (overrides YAML)')
     build.add_argument('-y', type=int, help='depth in gridfinity units (overrides YAML)')
@@ -157,8 +162,8 @@ def main(argv: list[str] | None = None) -> None:
     configure_logging(getattr(args, 'debug', False))
 
     names = block_names(args.in_paths)
-    blocks = [storage_block_from_args(args, path) for path in args.in_paths]
-    parts = [build_part(block, arrange=args.arrange) for block in blocks]
+    storage = [part_from_args(args, path) for path in args.in_paths]
+    parts = [build_part(part, arrange=args.arrange) for part in storage]
 
     if not args.no_show:
         (show_in_row if args.row else show_in_column)(parts, names)

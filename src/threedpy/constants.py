@@ -1,6 +1,6 @@
 import os
 
-from gridfinity_build123d.constants import gridfinity_standard
+from gridfinity_build123d.constants import gf_bin, gridfinity_standard
 
 """ Config """
 # repo root, two levels up from src/threedpy/
@@ -22,14 +22,14 @@ GFU_HEIGHT: float = 7.0  # from gf spec https://gridfinity.xyz/assets/img/spec_d
 SLOT_DEPTH_CLEARANCE: float = 0.25
 SLOT_DIAMETER_CLEARANCE: float = 0.25
 
-""" Scoops """
+""" SlotScoops """
 # TODO --> min row-scoop width (10-12mm??)
 # Scoop X-axis defaults
-SCOOP_FLAT_WIDTH: float = 10.0
-SCOOP_WALL_WIDTH: float = 7.5
+SLOT_SCOOP_FLAT_WIDTH: float = 10.0
+SLOT_SCOOP_WALL_WIDTH: float = 7.5
 # Scoop Y-axis default
-SCOOP_LENGTH: float = 20.0
-SCOOP_FILLET_RADIUS: float = 2.5
+SLOT_SCOOP_LENGTH: float = 20.0
+SLOT_SCOOP_FILLET_RADIUS: float = 2.5
 
 """ yacv preview """
 # gap between blocks when previewing several in yacv (mm)
@@ -39,3 +39,8 @@ PREVIEW_GAP: float = 10.0
 STORAGE_BLOCK_KEYS = (
     'name', 'type', 'font_size', 'x', 'y', 'z', 'x_mm', 'y_mm', 'z_mm', 'global', 'round_to_gfu'
 )
+
+""" storageBin """
+STORAGE_BIN_KEYS = ('x', 'y', 'z', 'font_size', 'label')
+LABEL_TAB_WIDTH: float = gf_bin.label.width
+SCOOP_RADIUS: float = 15.0
