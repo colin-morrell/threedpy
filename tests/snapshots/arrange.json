@@ -1,0 +1,58 @@
+{
+    "round-horz-label-even-rows.yaml": {
+        "solids": 1,
+        "volume": 470845.846
+    },
+    "round-horz-label-odd-rows.yaml": {
+        "solids": 1,
+        "volume": 334721.49
+    },
+    "round-horz-label-single-row.yaml": {
+        "solids": 1,
+        "volume": 136458.919
+    },
+    "round-horz-nolabel-even-rows.yaml": {
+        "solids": 1,
+        "volume": 470757.745
+    },
+    "round-horz-nolabel-odd-rows.yaml": {
+        "solids": 1,
+        "volume": 334654.496
+    },
+    "round-horz-nolabel-single-row.yaml": {
+        "solids": 1,
+        "volume": 136436.731
+    },
+    "round-vert-label-even-rows.yaml": {
+        "solids": 1,
+        "volume": 177411.081
+    },
+    "round-vert-label-odd-rows.yaml": {
+        "solids": 1,
+        "volume": 122484.094
+    },
+    "round-vert-label-single-row.yaml": {
+        "solids": 1,
+        "volume": 68062.639
+    },
+    "round-vert-nolabel-even-rows.yaml": {
+        "solids": 1,
+        "volume": 177276.683
+    },
+    "round-vert-nolabel-odd-rows.yaml": {
+        "solids": 1,
+        "volume": 122391.952
+    },
+    "round-vert-nolabel-single-row.yaml": {
+        "solids": 1,
+        "volume": 68041.294
+    },
+    "scoops.yaml": {
+        "solids": 1,
+        "volume": 292347.146
+    },
+    "socket-extension.yaml": {
+        "solids": 1,
+        "volume": 136649.042
+    }
+}
