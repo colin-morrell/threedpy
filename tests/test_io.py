@@ -1,0 +1,284 @@
+"""
+Loader tests: YAML-shaped dicts (and files) into StorageBlock / StorageBin objects, via io.py.
+
+No geometry is built beyond the small item solids slots measure for their footprints.
+"""
+
+import logging
+
+import pytest
+
+from threedpy.constants import (
+    GFU_GRID,
+    SLOT_DEPTH_CLEARANCE,
+    SLOT_DIAMETER_CLEARANCE,
+    SLOT_SCOOP_LENGTH,
+    SLOT_SCOOP_WALL_WIDTH,
+)
+from threedpy.features import LabelMode, SlotScoopMode
+from threedpy.io import load_from_path, load_storage_bin, load_storage_block
+from threedpy.item import CylinderItem, Orientation, Rotation, Shape, SocketExtension
+from threedpy.storage import RoundAxis, StorageBin, StorageBlock, StorageBlockType
+
+# a vertical cylinder slot, the simplest valid slot
+SLOT = {'shape': 'cylinder', 'diameter': 10, 'depth': 5}
+
+
+def block(slots=None, rows=None, **storage_block):
+    """Load a StorageBlock from slots (one row) or rows; storage_block keys default to 2x2x3."""
+    data = {'storage_block': {'x': 2, 'y': 2, 'z': 3, **storage_block}}
+    data.update({'rows': rows} if rows is not None else {'slots': slots or [dict(SLOT)]})
+    return load_storage_block(data)
+
+
+def first_slot(storage_block):
+    return next(iter(next(iter(storage_block.rows))))
+
+
+def all_slots(storage_block):
+    return [slot for row in storage_block.rows for slot in row]
+
+
+# --- storage_block
+
+
+class TestStorageBlock:
+    def test_dimensions_in_gfu(self):
+        b = block(x=3, y=2, z=4)
+        assert (b.x, b.y, b.z) == (3, 2, 4)
+
+    def test_dimensions_in_mm_use_the_built_unit_size(self):
+        b = block(x=None, x_mm=2 * GFU_GRID)
+        assert b.x == pytest.approx(2)
+
+    def test_mm_rounded_to_gfu_rounds_up(self):
+        b = block(x=None, x_mm=50, round_to_gfu='x')
+        assert b.x == 2
+
+    def test_axis_and_mm_together_raise(self):
+        with pytest.raises(ValueError, match='give x or x_mm, not both'):
+            block(x_mm=84)
+
+    @pytest.mark.parametrize(('spec', 'expected'), [
+        (None, RoundAxis.NONE),
+        ('x', RoundAxis.X),
+        (['x', 'z'], RoundAxis.X | RoundAxis.Z),
+        ('all', RoundAxis.ALL),
+    ])
+    def test_round_to_gfu_forms(self, spec, expected):
+        assert block(round_to_gfu=spec).round_to_gfu == expected
+
+    def test_round_to_gfu_unknown_axis_raises(self):
+        with pytest.raises(ValueError, match="unknown axis 'w'"):
+            block(round_to_gfu=['w'])
+
+    def test_overrides_beat_the_config(self):
+        data = {'storage_block': {'x': 2, 'y': 2, 'z': 3}, 'slots': [dict(SLOT)]}
+        b = load_storage_block(data, x=4, z=5, block_type='positional', name='cli')
+        assert (b.x, b.y, b.z) == (4, 2, 5)
+        assert b.type is StorageBlockType.POSITIONAL
+        assert b.name == 'cli'
+
+    def test_type_defaults_to_rowed(self):
+        assert block().type is StorageBlockType.ROWED
+
+    def test_unknown_storage_block_key_raises(self):
+        with pytest.raises(ValueError, match='storage_block: unknown key'):
+            block(colour='red')
+
+    def test_unknown_top_level_key_raises(self):
+        data = {'storage_block': {'x': 2, 'y': 2, 'z': 3}, 'slots': [dict(SLOT)], 'global': {}}
+        with pytest.raises(ValueError, match='unknown top-level key'):
+            load_storage_block(data)
+
+    def test_top_level_slots_load_as_one_row(self):
+        b = block(slots=[dict(SLOT), dict(SLOT)])
+        assert len(b.rows) == 1
+        assert len(all_slots(b)) == 2
+
+
+# --- slot shapes and item keys
+
+
+class TestSlotShape:
+    def test_missing_shape_raises(self):
+        with pytest.raises(ValueError, match='no shape'):
+            block(slots=[{'diameter': 10, 'depth': 5, 'label': 'A'}])
+
+    def test_unknown_shape_lists_the_valid_ones(self):
+        with pytest.raises(ValueError, match="unknown shape 'round_vert'.*cylinder"):
+            block(slots=[{**SLOT, 'shape': 'round_vert'}])
+
+    def test_typo_key_is_reported_as_unknown(self):
+        slot = {'shape': 'cylinder', 'diameter': 10, 'depht': 5, 'label': 'A'}
+        with pytest.raises(ValueError, match="slot 'A': unknown key.*depht"):
+            block(slots=[slot])
+
+    def test_item_errors_name_the_slot(self):
+        with pytest.raises(ValueError, match="slot 'A'.*diameter.*depth"):
+            block(slots=[{'shape': 'cylinder', 'diameter': 10, 'label': 'A'}])
+
+    def test_cylinder_keys_build_its_item(self):
+        slot = first_slot(block(slots=[{**SLOT, 'orientation': 'horizontal'}]))
+        assert slot.shape is Shape.CYLINDER
+        assert isinstance(slot.item, CylinderItem)
+        assert slot.item.orientation is Orientation.HORIZONTAL
+        assert slot.item.rotation is Rotation.UP
+        assert slot.item.diameter == pytest.approx(10 + SLOT_DIAMETER_CLEARANCE)
+        assert slot.item.depth == pytest.approx(5 + SLOT_DEPTH_CLEARANCE)
+
+    def test_socket_extension_keys_build_its_item(self):
+        slot = {'shape': 'socket_extension', 'total_length': 50.7, 'rotation': 'down'}
+        item = first_slot(block(slots=[slot])).item
+        assert isinstance(item, SocketExtension)
+        assert item.rotation is Rotation.DOWN
+        assert item.total_length == pytest.approx(50.7 + SLOT_DEPTH_CLEARANCE)
+
+    def test_defaults_cascade_global_row_slot(self):
+        b = block(
+            rows=[{'diameter': 12, 'slots': [{}, {'diameter': 14}]}],
+            **{'global': {'shape': 'cylinder', 'diameter': 10, 'depth': 5}},
+        )
+        diameters = [slot.item.diameter - SLOT_DIAMETER_CLEARANCE for slot in all_slots(b)]
+        assert diameters == pytest.approx([12, 14])
+
+    def test_other_shapes_keys_are_dropped(self):
+        prism = {'shape': 'prism_rect', 'width': 10, 'length': 20, 'depth': 5}
+        slot = first_slot(block(slots=[prism], **{'global': {'orientation': 'horizontal'}}))
+        assert slot.shape is Shape.PRISM_RECT
+        assert slot.item is None
+
+
+# --- labels
+
+
+class TestLabels:
+    def test_slot_label_text(self):
+        slot = first_slot(block(slots=[{**SLOT, 'label': 10}]))
+        assert slot.label.mode is LabelMode.SLOT_LABEL
+        assert slot.label.label_text == '10'
+
+    def test_no_label_text_means_no_label(self):
+        assert first_slot(block()).label.mode is LabelMode.NO_LABEL
+
+    def test_labels_false_turns_them_off(self):
+        slot = first_slot(block(slots=[{**SLOT, 'label': 'A', 'labels': False}]))
+        assert slot.label.mode is LabelMode.NO_LABEL
+
+    def test_row_label_is_shared_by_its_slots(self, caplog):
+        rows = [{'row_label': 'R', 'slots': [{**SLOT, 'label': 'A'}, dict(SLOT)]}]
+        with caplog.at_level(logging.WARNING):
+            b = block(rows=rows)
+        row = next(iter(b.rows))
+        assert row.label.mode is LabelMode.ROW_LABEL
+        assert all(slot.label is row.label for slot in row)
+        assert 'row_label replaces 1 slot label' in caplog.text
+
+    def test_no_labels_overrides_row_and_slot_labels(self):
+        data = {
+            'storage_block': {'x': 2, 'y': 2, 'z': 3},
+            'rows': [{'row_label': 'R', 'slots': [{**SLOT, 'label': 'A'}]}],
+        }
+        b = load_storage_block(data, no_labels=True)
+        row = next(iter(b.rows))
+        assert row.label.mode is LabelMode.NO_LABEL
+        assert all(slot.label.mode is LabelMode.NO_LABEL for slot in row)
+
+
+# --- scoops
+
+
+class TestScoops:
+    def test_no_slot_scoop_by_default(self):
+        assert first_slot(block()).scoop.mode is SlotScoopMode.NONE
+
+    def test_slot_scoop_true_uses_the_slot_default(self):
+        slot = first_slot(block(slots=[{**SLOT, 'slot_scoop': True}]))
+        assert slot.scoop.mode is SlotScoopMode.SLOT_SCOOP
+        assert slot.scoop.flat_width == pytest.approx(slot.x_footprint)
+        assert slot.scoop.depth == pytest.approx(slot.x_footprint / 2)
+        assert slot.scoop.wall_width == SLOT_SCOOP_WALL_WIDTH
+        assert slot.scoop.length == SLOT_SCOOP_LENGTH
+
+    def test_slot_scoop_mapping_overrides_dimensions(self):
+        slot = first_slot(block(slots=[{**SLOT, 'slot_scoop': {'length': 15}}]))
+        assert slot.scoop.mode is SlotScoopMode.SLOT_SCOOP
+        assert slot.scoop.length == 15
+
+    def test_unknown_scoop_key_raises(self):
+        with pytest.raises(ValueError, match='scoop: unknown key.*lenght'):
+            block(slots=[{**SLOT, 'slot_scoop': {'lenght': 15}}])
+
+    def test_row_scoop_is_shared_and_replaces_slot_scoops(self, caplog):
+        rows = [{'row_scoop': True, 'slots': [{**SLOT, 'slot_scoop': True}, dict(SLOT)]}]
+        with caplog.at_level(logging.WARNING):
+            b = block(rows=rows)
+        row = next(iter(b.rows))
+        assert row.scoop.mode is SlotScoopMode.ROW_SCOOP
+        assert all(slot.scoop is row.scoop for slot in row)
+        assert 'row_scoop replaces 1 slot_scoop' in caplog.text
+
+    def test_global_row_scoop_applies_to_every_row(self):
+        rows = [{'slots': [dict(SLOT)]}, {'slots': [dict(SLOT)]}]
+        b = block(rows=rows, **{'global': {'row_scoop': True}})
+        assert all(row.scoop.mode is SlotScoopMode.ROW_SCOOP for row in b.rows)
+
+
+# --- storage_bin
+
+
+class TestStorageBin:
+    def test_dimensions_label_and_font_size(self):
+        data = {'storage_bin': {'x': 2, 'y': 1, 'z': 4, 'font_size': 8.0, 'label': 'M3'}}
+        b = load_storage_bin(data)
+        assert (b.x, b.y, b.z) == (2, 1, 4)
+        assert b.label.label_text == 'M3'
+        assert b.label.font_size == 8.0
+        assert b.label.mode is LabelMode.BIN_LABEL
+
+    def test_no_labels(self):
+        data = {'storage_bin': {'x': 1, 'y': 1, 'z': 4, 'label': 'M3'}}
+        b = load_storage_bin(data, no_labels=True)
+        assert b.label.mode is LabelMode.NO_LABEL
+
+    def test_overrides_beat_the_config(self):
+        b = load_storage_bin({'storage_bin': {'x': 1, 'y': 1, 'z': 4}}, y=2, z=5)
+        assert (b.x, b.y, b.z) == (1, 2, 5)
+
+    def test_unknown_bin_key_raises(self):
+        with pytest.raises(ValueError, match='storage_bin: unknown key'):
+            load_storage_bin({'storage_bin': {'x': 1, 'y': 1, 'z': 4, 'colour': 'red'}})
+
+    def test_other_top_level_keys_raise(self):
+        with pytest.raises(ValueError, match='unknown top-level key'):
+            load_storage_bin({'storage_bin': {'x': 1, 'y': 1, 'z': 4}, 'slots': []})
+
+
+# --- files
+
+
+class TestLoadFromPath:
+    def test_picks_a_bin_by_its_top_level_key(self, tmp_path):
+        path = tmp_path / 'm3-bin.yaml'
+        path.write_text("storage_bin:\n    x: 1\n    y: 1\n    z: 4\n")
+        b = load_from_path(path)
+        assert isinstance(b, StorageBin)
+        assert b.name == 'm3-bin'
+
+    def test_loads_a_block_otherwise(self, tmp_path):
+        path = tmp_path / 'sockets.yaml'
+        path.write_text(
+            "storage_block:\n    x: 2\n    y: 2\n    z: 3\n"
+            "slots:\n    - {shape: 'cylinder', diameter: 10, depth: 5}\n"
+        )
+        b = load_from_path(path)
+        assert isinstance(b, StorageBlock)
+        assert b.name == 'sockets'
+
+    def test_config_name_beats_the_file_name(self, tmp_path):
+        path = tmp_path / 'sockets.yaml'
+        path.write_text(
+            "storage_block:\n    name: 'mine'\n    x: 2\n    y: 2\n    z: 3\n"
+            "slots:\n    - {shape: 'cylinder', diameter: 10, depth: 5}\n"
+        )
+        assert load_from_path(path).name == 'mine'

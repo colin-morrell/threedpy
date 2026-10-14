@@ -1,0 +1,18 @@
+# socket_extension test: extensions laid along X, two on the first row and one on the second
+storage_block:
+    type: 'rowed'
+    font_size: 6.0
+    x: 4
+    y: 1
+    z: 3
+    global:
+        shape: 'socket_extension'
+        orientation: 'horizontal'
+        # square drive end towards +X
+        rotation: 'right'
+rows:
+    - slots:
+        - {total_length: 50.7, label: '2"'}
+        - {total_length: 102.15, label: '4"'}
+    - slots:
+        - {total_length: 152.5, label: '6"'}
