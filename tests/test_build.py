@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from threedpy.io import load_from_path
+from threedpy.io import load_from_path, load_storage_block
 
 TESTS_DIR = Path(__file__).parent
 CONFIGS = sorted(TESTS_DIR.glob('*.yaml'))
@@ -54,3 +54,18 @@ class TestArrangeBuild:
         assert path.name in data, f'no snapshot for {path.name}; run with --update-snapshots'
         assert actual['solids'] == data[path.name]['solids']
         assert actual['volume'] == pytest.approx(data[path.name]['volume'], rel=VOLUME_TOLERANCE)
+
+
+@pytest.mark.xfail(strict=True, reason='validate_x_spacing() reads row.x_slot_spacing, which '
+                   'raises for positional rows: only rowed layout sets row.width')
+def test_positional_block_builds():
+    data = {
+        'storage_block': {
+            'type': 'positional', 'x': 2, 'y': 2, 'z': 3,
+            'global': {'shape': 'cylinder', 'depth': 5},
+        },
+        'slots': [{'diameter': 10, 'x': -15, 'y': 10}, {'diameter': 14, 'x': 12, 'y': -8}],
+    }
+    part = load_storage_block(data).build(arrange=True).part
+    assert part.is_valid
+    assert len(part.solids()) == 1

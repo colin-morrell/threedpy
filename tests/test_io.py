@@ -7,6 +7,7 @@ No geometry is built beyond the small item solids slots measure for their footpr
 import logging
 
 import pytest
+from build123d import Box, BuildPart
 
 from threedpy.constants import (
     GFU_GRID,
@@ -16,7 +17,7 @@ from threedpy.constants import (
     SLOT_SCOOP_WALL_WIDTH,
 )
 from threedpy.features import LabelMode, SlotScoopMode
-from threedpy.io import load_from_path, load_storage_bin, load_storage_block
+from threedpy.io import export_as_stl, load_from_path, load_storage_bin, load_storage_block
 from threedpy.item import CylinderItem, Orientation, Rotation, Shape, SocketExtension
 from threedpy.storage import RoundAxis, StorageBin, StorageBlock, StorageBlockType
 
@@ -282,3 +283,38 @@ class TestLoadFromPath:
             "slots:\n    - {shape: 'cylinder', diameter: 10, depth: 5}\n"
         )
         assert load_from_path(path).name == 'mine'
+
+
+# --- STL export
+
+
+@pytest.fixture
+def small_part():
+    with BuildPart() as part:
+        Box(10, 10, 10)
+    return part
+
+
+class TestExportAsStl:
+    def test_writes_the_file(self, tmp_path, small_part):
+        path = tmp_path / 'cube.stl'
+        export_as_stl(small_part, path)
+        assert path.stat().st_size > 0
+
+    def test_overwriting_warns(self, tmp_path, small_part, caplog):
+        path = tmp_path / 'cube.stl'
+        export_as_stl(small_part, path)
+        with caplog.at_level(logging.WARNING):
+            export_as_stl(small_part, path)
+        assert 'overwriting' in caplog.text
+
+    @pytest.mark.parametrize(('name', 'error', 'match'), [
+        ('', ValueError, 'empty'),
+        ('.', ValueError, 'is a directory'),
+        ('cube.step', ValueError, 'must end in .stl'),
+        ('missing/cube.stl', FileNotFoundError, 'does not exist'),
+    ], ids=['empty', 'directory', 'extension', 'missing parent'])
+    def test_bad_paths_raise(self, tmp_path, small_part, name, error, match):
+        path = str(tmp_path / name) if name else ''
+        with pytest.raises(error, match=match):
+            export_as_stl(small_part, path)
