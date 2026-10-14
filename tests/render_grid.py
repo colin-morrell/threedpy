@@ -12,7 +12,7 @@ import os
 from build123d import BuildPart, Color, Location
 
 from threedpy.generate import generate_storage_block
-from threedpy.storage import load_storage_block_from_path
+from threedpy.io import load_storage_block_from_path
 
 TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 # gap between blocks, along X and Y (mm)
