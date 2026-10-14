@@ -29,7 +29,6 @@ from threedpy.constants import SLOT_DEPTH_CLEARANCE, SLOT_DIAMETER_CLEARANCE
 logger = logging.getLogger(__name__)
 
 
-# TODO --> rename SlotShape
 class Shape(Enum):
     """
     Slot shape, set with 'shape' at the global, row or slot level.
@@ -47,45 +46,49 @@ class Shape(Enum):
 
 class Rotation(Enum):
     """
-    Direction a horizontal Item's top (+Z) points on the work surface (X/Y).
+    Top-down direction on the work surface (X/Y) an Item faces, applied after its Orientation.
 
-    From a top down view of the work surface:
-     - UP is towards +Y
-     - DOWN is towards -Y
-     - LEFT is towards -X
-     - RIGHT is towards +X
+    An Item faces where its top (+Z) points once HORIZONTAL, or its +Y side when VERTICAL:
+     - UP    --> +Y (no turn)
+     - DOWN  --> -Y
+     - LEFT  --> -X
+     - RIGHT --> +X
     """
 
     # TODO --> allow more fine-tuning. maybe CW/CCW + take a degree
 
-    NONE = None
     UP = 'up'
     DOWN = 'down'
     LEFT = 'left'
     RIGHT = 'right'
 
     @property
-    def lay_flat(self) -> Rot:
-        """Rotation that lays an Item's +Z axis this way on the work surface."""
+    def spin(self) -> Rot:
+        """Turn about Z (counter-clockwise seen from above) from UP to this direction."""
         match self:
             case Rotation.UP:
-                return Rot(X=-90)
-            case Rotation.DOWN:
-                return Rot(X=90)
+                return Rot()
             case Rotation.LEFT:
-                return Rot(Y=-90)
+                return Rot(Z=90)
+            case Rotation.DOWN:
+                return Rot(Z=180)
             case Rotation.RIGHT:
-                return Rot(Y=90)
-            case _:
-                raise ValueError('Rotation.NONE has no lay_flat rotation')
+                return Rot(Z=-90)
 
 
 class Orientation(Enum):
-    """
-    Orientation of the Item / resulting profile of the Slot.
+    """Orientation of the Item / resulting profile of the Slot.
+
+    Vertical: item Z matches surface Z.
+    Horizontal: item Z rotates to surface Y.
     """
     VERTICAL = 'vertical'
     HORIZONTAL = 'horizontal'
+
+    @property
+    def tilt(self) -> Rot:
+        """Rotation from the item as built (standing along +Z) into this orientation."""
+        return Rot(X=-90) if self is Orientation.HORIZONTAL else Rot()
 
 
 @dataclass
@@ -99,8 +102,8 @@ class Item(ABC):
 
     Args:
         orientation (Orientation): VERTICAL stands the item up; HORIZONTAL lays it on its side.
-        rotation (Rotation): which way a HORIZONTAL item's top points (default UP); NONE for
-            VERTICAL.
+        rotation (Rotation): top-down direction the item faces after its orientation (default UP,
+            no turn).
         diameter_clearance (float): added to the item's cross-section (diameters, widths).
         depth_clearance (float): added to the item's length.
 
@@ -114,7 +117,7 @@ class Item(ABC):
     fillet_scoop_rim: ClassVar[bool] = False
 
     orientation: Orientation = Orientation.VERTICAL
-    rotation: Rotation = Rotation.NONE
+    rotation: Rotation = Rotation.UP
     diameter_clearance: float = SLOT_DIAMETER_CLEARANCE
     depth_clearance: float = SLOT_DEPTH_CLEARANCE
 
@@ -123,13 +126,14 @@ class Item(ABC):
             self.orientation = Orientation(self.orientation)
         if not isinstance(self.rotation, Rotation):
             self.rotation = Rotation(self.rotation)
-        if self.orientation is Orientation.HORIZONTAL and self.rotation is Rotation.NONE:
-            self.rotation = Rotation.UP
-        if self.orientation is Orientation.VERTICAL and self.rotation is not Rotation.NONE:
-            raise ValueError(
-                f'[!] {type(self).__name__}: rotation {self.rotation.value} doesn\'t fit '
-                'orientation vertical (VERTICAL takes NONE)'
-            )
+
+    @property
+    def horizontal(self) -> bool:
+        return self.orientation == Orientation.HORIZONTAL
+
+    @property
+    def vertical(self) -> bool:
+        return self.orientation == Orientation.VERTICAL
 
     def build(self) -> Part:
         l = f'[.] build() {type(self).__name__}: {self.orientation}, {self.rotation}'
@@ -145,9 +149,7 @@ class Item(ABC):
         # build123d objects made inside an active builder (e.g. a StorageBlock's BuildPart) add
         # themselves to it; an empty context keeps the item out of whatever is being built
         part = contextvars.Context().run(self.build)
-        if self.orientation is Orientation.VERTICAL:
-            return part
-        return self.rotation.lay_flat * part
+        return self.rotation.spin * self.orientation.tilt * part
 
 
 @dataclass
