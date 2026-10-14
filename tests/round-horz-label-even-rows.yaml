@@ -7,7 +7,8 @@ storage_block:
     y: 7
     z: 3
     global:
-        shape: 'round_horz'
+        shape: 'cylinder'
+        orientation: 'horizontal'
 rows:
     # for horizontal round slots, the measurements here are of the socket itself
     # they will get translated accordingly when the object is rotated 90
