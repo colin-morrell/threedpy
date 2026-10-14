@@ -10,11 +10,7 @@ from yacv_server import show
 
 from threedpy.constants import PREVIEW_GAP
 from threedpy.io import load_config, load_from_path
-from threedpy.storage import (
-    StorageBin,
-    StorageBlock,
-    StorageBlockType,
-)
+from threedpy.storage import Storage, StorageBlockType
 from threedpy.util import export_as_stl
 
 # yacv preview colors from config.yaml; unset keys fall back to yacv's defaults
@@ -30,11 +26,11 @@ logger = logging.getLogger(__name__)
 # %%
 
 
-def build_part(part: StorageBin|StorageBlock, arrange: bool = False):
+def build_part(part: Storage, arrange: bool = False):
     return part.build(arrange)
 
 
-def part_from_args(args: argparse.Namespace, in_path: str) -> StorageBin | StorageBlock:
+def part_from_args(args: argparse.Namespace, in_path: str) -> Storage:
     """Build a StorageBin or StorageBlock from the input YAML. CLI args override YAML settings."""
     part = load_from_path(
         in_path,

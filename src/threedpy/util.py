@@ -125,6 +125,7 @@ class DoublyLinkedList[T]:
 
 
 def build_gf_base(grid_x: int, grid_y: int):
+    logger.info(f'[.] build_gf_base(): x={grid_x} y={grid_y}')
     base = BaseEqual(
         grid_x,
         grid_y,
@@ -135,11 +136,9 @@ def build_gf_base(grid_x: int, grid_y: int):
 
 def build_gf_box(grid_x: int, grid_y: int, grid_z: int):
     """Generate solid gridfinity box given x/y/z. All in gf units."""
-
-    logger.info('build_gf_box(): building gf base...')
     base = build_gf_base(grid_x, grid_y)
 
-    logger.info('build_gf_box(): building gf box...')
+    logger.info(f'[.] build_gf_box():  x={grid_x} y={grid_y} z={grid_z}')
     gf_box = Bin(
         base,
         height_in_units=grid_z

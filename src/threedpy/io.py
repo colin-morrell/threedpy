@@ -18,7 +18,14 @@ from threedpy.constants import (
 )
 from threedpy.features import Label, LabelMode, Slot, SlotScoop, SlotScoopMode
 from threedpy.item import ITEM_TYPES, Item, Shape
-from threedpy.storage import RoundAxis, Row, StorageBin, StorageBlock, StorageBlockType
+from threedpy.storage import (
+    BlockRow,
+    RoundAxis,
+    Storage,
+    StorageBin,
+    StorageBlock,
+    StorageBlockType,
+)
 from threedpy.util import DoublyLinkedList
 
 logger = logging.getLogger(__name__)
@@ -191,14 +198,14 @@ def load_from_path(
         z: float | None = None,
         debug: bool = False,
         no_labels: bool = False
-    ) -> StorageBin | StorageBlock:
+    ) -> Storage:
     """Build a StorageBin or StorageBlock from YAML config, picked by its top-level keys. Name
     defaults to filename if not set in config.
     """
     logger.info(f'loading {path}')
     with open(path) as f:
         data = yaml.safe_load(f) or {}
-    part: StorageBin | StorageBlock
+    part: Storage
     if 'storage_bin' in data:
         part = load_storage_bin(data, name=name, x=x, y=y, z=z, debug=debug, no_labels=no_labels)
     else:
@@ -230,12 +237,12 @@ def _slot_scoop(slot: Slot, spec: Any, owner: str) -> SlotScoop:
     return scoop
 
 
-def _row_scoop(row: Row, spec: Any) -> SlotScoop:
+def _row_scoop(row: BlockRow, spec: Any) -> SlotScoop:
     """A row's scoop from its 'row_scoop' YAML value: false/missing -> none, true -> defaults, a
     mapping -> those dimensions overridden.
 
     depth/length come from the row's slots now so validation can run before the build;
-    flat_width/wall_width need the slot layout and are filled in at build time (Row.build_scoop.)
+    flat_width/wall_width need the slot layout and are filled in at build time (BlockRow.build_scoop.)
     """
     if not spec:
         return SlotScoop()
@@ -299,7 +306,7 @@ def _slot_from_config(config: dict[str, Any]) -> Slot:
     return slot
 
 
-def load_rows(data: dict[str, Any], font_size: float = 6.0) -> list[Row]:
+def load_rows(data: dict[str, Any], font_size: float = 6.0) -> list[BlockRow]:
     """Build Rows from a parsed YAML config.
 
     --> Slots are grouped under 'rows', each with its own 'slots' list and an
@@ -336,7 +343,7 @@ def load_rows(data: dict[str, Any], font_size: float = 6.0) -> list[Row]:
         slots = [
             _slot_from_config({**defaults, **row_defaults, **slot}) for slot in row_data['slots']
         ]
-        row = Row(
+        row = BlockRow(
             font_size=max((slot.font_size for slot in slots), default=defaults['font_size']),
             name=row_data.get('name', ''),
             slots=DoublyLinkedList(slots)

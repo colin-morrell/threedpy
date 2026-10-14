@@ -1,6 +1,7 @@
 import logging
 import math
 from collections.abc import Iterable, Iterator
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, Flag, auto
 
@@ -59,8 +60,8 @@ class RoundAxis(Flag):
 
 
 @dataclass
-class Row:
-    """Row
+class BlockRow:
+    """BlockRow
 
     An ordered collection of slots.
 
@@ -148,7 +149,7 @@ class Row:
 
     @property
     def y(self) -> float:
-        """Row's position on the Y-axis."""
+        """BlockRow's position on the Y-axis."""
         return self._y
 
     @y.setter
@@ -255,23 +256,89 @@ class Row:
 
 
 @dataclass
-class StorageBin:
+class Storage(ABC):
+    """Storage
+
+    A printable gridfinity organizer: StorageBin/StorageBlock, sized in gridfinity units (GFU).
+
+    Args:
+        debug (bool): draw debug geometry.
+        name (str, optional): defaults to the YAML filename.
+        font_size (float): label font size.
+        x (float): dimensions along the X-axis in GFU.
+        y (float): dimensions along the Y-axis in GFU.
+        z (float): height in GFU.
+        round_to_gfu (RoundAxis): dimensions to round up to whole GFU number.
+    """
+
+    debug: bool = False
+    name: str = ''
+    font_size: float = 6.0
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+    round_to_gfu: RoundAxis = RoundAxis.NONE
+
+    def __post_init__(self) -> None:
+        for axis, flag in (('x', RoundAxis.X), ('y', RoundAxis.Y), ('z', RoundAxis.Z)):
+            if flag in self.round_to_gfu:
+                # round() first so float error doesn't add a unit
+                setattr(self, axis, math.ceil(round(getattr(self, axis), 6)))
+
+    @property
+    def x_mm(self) -> float:
+        """Width in mm (GFU_GRID spec is 42mm.)"""
+        return self.x * GFU_GRID
+
+    @property
+    def y_mm(self) -> float:
+        """Length in mm (GFU_GRID spec is 42mm.)"""
+        return self.y * GFU_GRID
+
+    @property
+    def z_mm(self) -> float:
+        """Height in mm (GFU_HEIGHT spec is 7mm.)"""
+        return self.z * GFU_HEIGHT
+
+    def build(self, arrange: bool = False) -> BuildPart:
+        """Build the part. arrange swaps a slow gridfinity base for a plain box, where supported."""
+        logger.info(f'[.] {type(self).__name__}.build()')
+        return self._build(arrange)
+
+    @abstractmethod
+    def _build(self, arrange: bool = False) -> BuildPart:
+        """Subclasses build their solid here."""
+
+    def build_base(self, arrange: bool = False):
+        logger.info(f'[.] {type(self).__name__}.build_base()')
+        self._build_base(arrange)
+
+    @abstractmethod
+    def _build_base(self, arrange: bool = False):
+        """Subclasses build their bases here."""
+
+    def validate(self) -> None:
+        """Raise ValueError if the configuration can't be built."""
+        logger.info(f'[.] {type(self).__name__}.validate()')
+        self._validate()
+        logger.info(f'[+] {type(self).__name__}.validate() passed.')
+
+    @abstractmethod
+    def _validate(self) -> None:
+        """Subclasses run their validation checks here."""
+
+
+@dataclass
+class StorageBin(Storage):
     """StorageBin"""
 
     # TODO --> support scoop/noscoop
     # TODO --> support labeltab/nolabeltab
 
-    debug: bool = False
-    name: str = ''
     label: BinLabel = field(default_factory=BinLabel)
-    font_size: float = 6.0
-    x: int = 0
-    y: int = 0
-    z: int = 0
-    round_to_gfu: RoundAxis = RoundAxis.NONE
     scoop_radius: float = SCOOP_RADIUS
 
-    def build(self, _: bool=True):
+    def _build(self, arrange: bool = False) -> BuildPart:  # noqa: ARG002
         """Iterate through all slots of all rows and build their specified shapes and features.
 
         Slots and scoops are placed relative to top_face's height when given. z_mm assumes the
@@ -280,27 +347,26 @@ class StorageBin:
         with BuildPart() as part:
             self.log_build()
             self.validate()
-
-            logger.info('StorageBin.build(): building gf base...')
-            base = build_gf_base(self.x, self.y)
-
-            logger.info('StorageBin.build(): building gf bin...')
-            _bin = Bin(
-                base,
-                compartments=CompartmentsEqual(
-                    #div_x=self.x,
-                    #div_y=self.y,
-                    compartment_list=Compartment(
-                        features=[BinLabel(), Scoop(radius=self.scoop_radius)]
-                    ),
-                ),
-                height_in_units=self.z
-            )
+            self.build_base()
 
             top_face = part.faces().sort_by(Axis.Z)[-1]
             self.label.build(top_face, self.label_tab_center(top_face))
 
             return part
+
+    def _build_base(self):
+        base = build_gf_base(int(self.x), int(self.y))
+        _bin = Bin(
+            base,
+            compartments=CompartmentsEqual(
+                #div_x=self.x,
+                #div_y=self.y,
+                compartment_list=Compartment(
+                    features=[BinLabel(), Scoop(radius=self.scoop_radius)]
+                ),
+            ),
+            height_in_units=int(self.z)
+        )
 
     @staticmethod
     def label_tab_center(top_face) -> tuple[float, float]:
@@ -311,9 +377,8 @@ class StorageBin:
         # TODO
         pass
 
-    def validate(self) -> None:
+    def _validate(self) -> None:
         # TODO --> label text bounds check on X/Y
-        logger.info('StorageBin.validate(): validating params...')
         self.validate_gfu()
         self.validate_label_z()
         self.validate_scoop_radius()
@@ -326,7 +391,7 @@ class StorageBin:
             )
 
     def validate_label_z(self) -> None:
-        if self.label.mode is not None and self.z < 3:
+        if self.label.mode is not LabelMode.NO_LABEL and self.z < 3:
             raise ValueError(f'[!] storage_bin {self.name}: label tab requires Z > 2')
 
     def validate_scoop_radius(self) -> None:
@@ -342,7 +407,7 @@ class StorageBin:
 
 
 @dataclass
-class StorageBlock:
+class StorageBlock(Storage):
     """StorageBlock
 
     A gridfinity storage block for holding tools, sockets, etc. A StorageBlock is structured as a
@@ -372,24 +437,14 @@ class StorageBlock:
     # TODO --> auto allocate slots given # rows
     # TODO --> auto allocate slots/rows given GFU
 
-    debug: bool = False
     no_labels: bool = False
-    name: str = ''
     type: StorageBlockType = StorageBlockType.ROWED
-    font_size: float = 6.0
-    rows: DoublyLinkedList[Row] = field(default_factory=DoublyLinkedList)
-    x: float = 0.0
-    y: float = 0.0
-    z: float = 0.0
-    round_to_gfu: RoundAxis = RoundAxis.NONE
+    rows: DoublyLinkedList[BlockRow] = field(default_factory=DoublyLinkedList)
 
     def __post_init__(self) -> None:
+        super().__post_init__()
         if not isinstance(self.type, StorageBlockType):
             self.type = StorageBlockType(self.type)
-        for axis, flag in (('x', RoundAxis.X), ('y', RoundAxis.Y), ('z', RoundAxis.Z)):
-            if flag in self.round_to_gfu:
-                # round() first so float error doesn't add a unit
-                setattr(self, axis, math.ceil(round(getattr(self, axis), 6)))
 
     @property
     def num_rows(self) -> int:
@@ -414,11 +469,6 @@ class StorageBlock:
         return self.x
 
     @property
-    def x_mm(self) -> float:
-        """Width in mm (GFU_GRID spec is 42mm.)"""
-        return self.x * GFU_GRID
-
-    @property
     def x_max_footprint(self) -> float:
         """Largest row's X-footprint."""
         return max(row.x_footprint for row in self.rows)
@@ -427,11 +477,6 @@ class StorageBlock:
     def y_gfu(self) -> float:
         """Number of gridfinity units along the Y axis."""
         return self.y
-
-    @property
-    def y_mm(self) -> float:
-        """Length in mm (GFU_GRID spec is 42mm.)"""
-        return self.y * GFU_GRID
 
     @property
     def y_footprint(self) -> float:
@@ -453,12 +498,7 @@ class StorageBlock:
         """Number of gridfinity height units along the Z axis."""
         return self.z
 
-    @property
-    def z_mm(self) -> float:
-        """Height in mm (GFU_HEIGHT spec is 7mm.)"""
-        return self.z * GFU_HEIGHT
-
-    def add_row(self, row: Row) -> Row:
+    def add_row(self, row: BlockRow) -> BlockRow:
         logger.debug(f'add_row(): {len(row)} slots')
         row.debug = self.debug
         for slot in row.slots:
@@ -470,43 +510,11 @@ class StorageBlock:
         self.rows.append(row)
         return row
 
-    def add_slots(self, slots: Iterable[Slot], name: str = '') -> Row:
+    def add_slots(self, slots: Iterable[Slot], name: str = '') -> BlockRow:
         """Append slots directly as a new row."""
-        return self.add_row(Row(name=name, slots=DoublyLinkedList(slots)))
+        return self.add_row(BlockRow(name=name, slots=DoublyLinkedList(slots)))
 
-    def build_row_markers(self, surface_z: float | None = None) -> None:
-        """Draw 1x1 (YxZ) box at the surface along the entire X-width of each row's Y position."""
-        if surface_z is None:
-            surface_z = self.z_mm
-        for row in self.rows:
-            coords = (
-                0,
-                row.y,
-                surface_z
-            )
-            with Locations(coords):
-                row.build_row_marker(self.x_mm)
-
-    def build_row_scoop(self, row: Row, surface_z: float) -> None:
-        """Generate the SlotScoop across an entire Row, if it has one."""
-        row.build_scoop((row.x_scoop, row.y_scoop, surface_z), self.x_mm)
-
-    def build_slot_scoop(self, row: Row, slot: Slot, surface_z: float) -> None:
-        """Generate a single slot's own SlotScoop, if it has one."""
-        slot.build_scoop((slot.x, row.y_scoop, surface_z))
-
-    def build_slot(self, slot: Slot, surface_z: float) -> None:
-        """Generate a single slot."""
-        coords = (
-            slot.x,
-            slot.y,
-            surface_z - slot.z
-        )
-        slot.log_build(coords)
-        with Locations(coords):
-            slot.build()
-
-    def build(self, arrange: bool=False):
+    def _build(self, arrange: bool=False):
         """Iterate through all slots of all rows and build their specified shapes and features.
 
         Slots and scoops are placed relative to top_face's height when given. z_mm assumes the
@@ -527,9 +535,9 @@ class StorageBlock:
                 self.build_row_markers(surface_z)
 
             for row in self.rows:
-                logger.debug(f'build(): Row with x_slot_spacing {row.x_slot_spacing}')
+                logger.debug(f'build(): BlockRow with x_slot_spacing {row.x_slot_spacing}')
                 for slot in row.slots:
-                    self.build_slot(slot, surface_z)
+                    slot.build(surface_z)
 
                     if not self.no_labels:
                         slot.build_label(top_face, (slot.x, row.y_label))
@@ -542,17 +550,20 @@ class StorageBlock:
 
             return part
 
-    def build_base(self, arrange: bool = False):
+    def _build_base(self, arrange: bool = False):
         if not arrange:
-            if self.is_gridfinity:
-                build_gf_box(int(self.x_gfu), int(self.y_gfu), int(self.z_gfu))
-                return
-            msg = f'{self.x_gfu} x {self.y_gfu} is_gridfinity() failed: building plain block'
-            logger.critical(msg)
+            self._build_base_gfu()
+            return
         with Locations((0,0,0)):
-            self.build_base_plain()
+            self._build_base_plain()
 
-    def build_base_plain(self) -> None:
+    def _build_base_gfu(self) -> None:
+        if self.is_gridfinity:
+            build_gf_box(int(self.x_gfu), int(self.y_gfu), int(self.z_gfu))
+            return
+        raise ValueError(f'{self.x_gfu}x{self.y_gfu} is_gridfinity() failed')
+
+    def _build_base_plain(self) -> None:
         """Build mock storage block surface without expensive gf generation call.
 
         Useful for faster testing/fine-tuning row/slot arrangement.
@@ -563,6 +574,27 @@ class StorageBlock:
             self.z_mm,
             align=(Align.CENTER, Align.CENTER, Align.MIN)
         )
+
+    def build_row_markers(self, surface_z: float | None = None) -> None:
+        """Draw 1x1 (YxZ) box at the surface along the entire X-width of each row's Y position."""
+        if surface_z is None:
+            surface_z = self.z_mm
+        for row in self.rows:
+            coords = (
+                0,
+                row.y,
+                surface_z
+            )
+            with Locations(coords):
+                row.build_row_marker(self.x_mm)
+
+    def build_row_scoop(self, row: BlockRow, surface_z: float) -> None:
+        """Generate the SlotScoop across an entire BlockRow, if it has one."""
+        row.build_scoop((row.x_scoop, row.y_scoop, surface_z), self.x_mm)
+
+    def build_slot_scoop(self, row: BlockRow, slot: Slot, surface_z: float) -> None:
+        """Generate a single slot's own SlotScoop, if it has one."""
+        slot.build_scoop((slot.x, row.y_scoop, surface_z))
 
     def log_build(self) -> None:
         logger.debug('-'*25)
@@ -584,14 +616,13 @@ class StorageBlock:
         for row in self.rows:
             yield from row
 
-    def validate(self) -> None:
+    def _validate(self) -> None:
         self.validate_x_bounds()
         self.validate_x_spacing()
         self.validate_y_bounds()
-        logger.info('[+] SurfaceBlock X/Y validation passed.')
 
     def validate_x_bounds(self) -> None:
-        """Validate all Row's slots do not exceed the StorageBlock's width on the X-axis."""
+        """Validate all BlockRow's slots do not exceed the StorageBlock's width on the X-axis."""
         # TODO --> automatically account for scoop/no scoop
         # TODO --> assume a reasonable margin so slots don't overlap
         if self.x_max_footprint > self.x_mm:
@@ -617,6 +648,7 @@ class StorageBlock:
 
     def x_align_slots(self) -> None:
         """X-align slots from L/-X to R/+X with even spacing (per row) between slots + L/R edges."""
+        logger.info('[.] x_align_slots()')
         for row in self.rows:
             cursor = -self.x_mm / 2
             row.width = self.x_mm
@@ -628,6 +660,7 @@ class StorageBlock:
 
     def y_align_rows(self) -> None:
         """Y-align rows from top/+Y to bottom/-Y with even spacing between rows + top/bottom edges."""
+        logger.info('[.] y_align_rows()')
         cursor = self.y_mm / 2
         for row in self.rows:
             cursor -= self.y_row_spacing
@@ -637,7 +670,7 @@ class StorageBlock:
                 slot.y = row.y
             cursor -= row.height
 
-    def __iter__(self) -> Iterator[Row]:
+    def __iter__(self) -> Iterator[BlockRow]:
         return iter(self.rows)
 
     def __len__(self) -> int:

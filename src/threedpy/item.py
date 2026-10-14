@@ -136,7 +136,7 @@ class Item(ABC):
         return self.orientation == Orientation.VERTICAL
 
     def build(self) -> Part:
-        l = f'[.] build() {type(self).__name__}: {self.orientation}, {self.rotation}'
+        l = f'[.] {type(self).__name__}.build(): {self.orientation}, {self.rotation}'
         logger.info(l)
         return self._build()
 
