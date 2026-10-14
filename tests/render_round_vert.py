@@ -11,11 +11,11 @@ import sys
 
 from yacv_server import show
 
-from threedpy.generate import SHOW_KWARGS
+from threedpy.cli import SHOW_KWARGS
 
 # make render_grid importable however this script is run
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from render_grid import build_grid  # noqa: E402
+from render_grid import build_grid
 
 # %%
 

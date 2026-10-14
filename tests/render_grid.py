@@ -11,7 +11,6 @@ import os
 
 from build123d import BuildPart, Color, Location
 
-from threedpy.generate import generate_storage_block
 from threedpy.io import load_storage_block_from_path
 
 TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -34,9 +33,9 @@ def build_grid(prefixes: list[str]) -> tuple[list, list[str]]:
     parts = {}
     for prefix, variant in columns:
         for test in TESTS:
-            name = '{}-{}-{}'.format(prefix, variant, test)
+            name = f'{prefix}-{variant}-{test}'
             block = load_storage_block_from_path(os.path.join(TESTS_DIR, name + '.yaml'))
-            part = generate_storage_block(block, arrange=True).part
+            part = block.build(arrange=True).part
             # rows are aligned by now, so their markers land where build_slots would draw them
             with BuildPart() as markers:
                 block.build_row_markers()
