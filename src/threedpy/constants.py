@@ -19,8 +19,8 @@ GFU_HEIGHT: float = 7.0  # from gf spec https://gridfinity.xyz/assets/img/spec_d
 
 """ Slots """
 # added to each slot's measured depth/diameter so the item fits (mm)
-SLOT_DEPTH_CLEARANCE: float = 0.25
-SLOT_DIAMETER_CLEARANCE: float = 0.25
+SLOT_DEPTH_CLEARANCE: float = 0.2
+SLOT_DIAMETER_CLEARANCE: float = 0.2
 
 """ SlotScoops """
 # TODO --> min row-scoop width (10-12mm??)

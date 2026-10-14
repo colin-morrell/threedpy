@@ -1,6 +1,7 @@
 import logging
 from dataclasses import dataclass, field, fields
 from enum import Enum
+from functools import cached_property
 from typing import Any
 
 from build123d import (
@@ -12,14 +13,16 @@ from build123d import (
     BuildLine,
     BuildPart,
     BuildSketch,
-    Cylinder,
     GeomType,
     Line,
+    Location,
     Locations,
     Mode,
+    Part,
     Plane,
     Select,
     Text,
+    add,
     edges,
     extrude,
     fillet,
@@ -33,32 +36,14 @@ from threedpy.constants import (
     SLOT_SCOOP_LENGTH,
     SLOT_SCOOP_WALL_WIDTH,
     SLOT_DEPTH_CLEARANCE,
-    SLOT_DIAMETER_CLEARANCE,
 )
+from threedpy.item import ITEM_TYPES, Item, Orientation, Shape
 
 logger = logging.getLogger(__name__)
 
 """
-Physical features drawn on/removed from the surface of a storageBlock.
+Physical features added to/subtracted from the surface of a storageBlock.
 """
-
-
-# TODO --> rename SlotShape
-class Shape(Enum):
-    """
-    Slot cross-section.
-
-    --> ROUND_HORZ: cylinder w/ circular faces perpendicular to Z-axis (long socket on its side)
-        --> currently only rotates towards +Y
-    --> ROUND_VERT: cylinder w/ circular faces parallel to Z-axis (short socket standing upright)
-    """
-    # TODO --> horz/vert should be combined once Item/Orientation/Direction are implemented
-    # TODO --> IRREGULAR
-
-    PRISM_HEXA = 'prism_hexa'
-    PRISM_RECT = 'prism_rect'
-    ROUND_HORZ = 'round_horz'
-    ROUND_VERT = 'round_vert'
 
 
 class SlotScoopMode(Enum):
@@ -86,10 +71,12 @@ class SlotScoop:
     Dimensions left as None are filled in by its owner (see fill_unset), e.g. a row scoop's
     flat_width/wall_width, which depend on where the row's slots end up.
 
-    SlotScoop extends a straight line outward from center (X) by half the flat_width. It then follows
-    a quadratic Bezier to create a parabola up (+Z) to the rim (surface). It's then mirrored across
-    and extruded along the Y axis.
+    SlotScoop extends a straight line outward from center (X) by half the flat_width. It then
+    follows a quadratic Bezier to create a parabola up (+Z) to the rim (surface). It's then
+    mirrored across and extruded along the Y axis.
     """
+
+    # TODO --> allow rotation
 
     flat_width: float = 0
     wall_width: float = 0
@@ -107,9 +94,8 @@ class SlotScoop:
             err = f'[!] SlotScoop.width(): flat_width: {self.flat_width}; wall_width: {self.wall_width}'
             raise ValueError(err)
 
-    def build(self, build_mode: Mode = Mode.SUBTRACT) -> BasePartObject:
-        """Build the scoop at the current location."""
-
+    def build(self, build_mode: Mode = Mode.SUBTRACT, round_rim: bool = True) -> BasePartObject:
+        """Build the scoop at the current location. round_rim=False leaves the rim sharp."""
         self.validate()
 
         half_flat = self.flat_width / 2
@@ -128,13 +114,20 @@ class SlotScoop:
             extrude(amount=self.length / 2, both=True)
         scoop = BasePartObject(part.part, mode=build_mode)
         # only a cut has a rim (--draw-solids adds the scoop as a solid)
-        if build_mode == Mode.SUBTRACT and self.fillet_radius > 0:
+        if build_mode == Mode.SUBTRACT and self.fillet_radius > 0 and round_rim:
             self.fillet_rim(scoop)
         return scoop
 
-    def validate(self):
+    def validate(self) -> None:
+        self.validate_mode()
+        self.validate_dimensions()
+
+    def validate_mode(self) -> None:
         if self.mode is SlotScoopMode.NONE:
             raise ValueError('[!] SlotScoop.build() called with SlotScoopMode.NONE')
+
+    def validate_dimensions(self) -> None:
+        """Validate the x/y/z dimensions have been set."""
         unset = [f.name for f in fields(self) if getattr(self, f.name) == 0]
         if unset:
             e = f'[!] {self.mode.value} scoop has unset dimension(s): {", ".join(unset)}'
@@ -278,16 +271,13 @@ class Slot:
     A single storage cavity. All measurements in mm unless otherwise stated.
     From a top-down view of the work surface, X is left/right and Y is up/down.
     """
-    # TODO SLOT REFACTOR
-        # --> slot methodology should be entirely shape independent
-        # --> no length/width/diameter, everything in terms of x/y/z
-        # --> transformations like diameter -> depth should happen in Item w/ Orientation+Direction
+    # TODO --> move PRISM_RECT/PRISM_HEXA onto items too; their length/width/depth live here
 
     debug: bool = False
     label: Label = field(default_factory=Label)
-    shape: Shape = Shape.ROUND_VERT  # TODO --> default to None
+    shape: Shape | None = None
+    item: Item | None = None
     scoop: SlotScoop = field(default_factory=SlotScoop)
-    diameter: float = 0.0
     depth: float = 0.0
     font_size: float = 6.0
     length: float = 0.0
@@ -297,20 +287,20 @@ class Slot:
     z_offset: float = 0.0
 
     def __post_init__(self) -> None:
+        if self.shape is None:
+            raise ValueError('[!] slot has no shape')
         if not isinstance(self.shape, Shape):
             self.shape = Shape(self.shape)
+        item_type = ITEM_TYPES.get(self.shape)
+        if item_type is not None and not isinstance(self.item, item_type):
+            raise ValueError(f'[!] {self.shape.value} slot needs a {item_type.__name__} item')
+        if item_type is None and self.item is not None:
+            raise ValueError(f'[!] {self.shape.value} slot takes no item')
 
     @property
     def draws_label(self) -> bool:
         """Whether the slot draws its own label."""
         return self.label.mode is LabelMode.SLOT_LABEL and not self.label.is_empty
-
-    @property
-    def built_align(self):
-        if self.shape == Shape.ROUND_HORZ:
-            # also center along socket's length so slot.y is its middle
-            return (Align.CENTER, Align.CENTER, Align.CENTER)
-        return (Align.CENTER, Align.CENTER)
 
     @property
     def built_mode(self):
@@ -319,68 +309,66 @@ class Slot:
         return Mode.ADD
 
     @property
-    def built_rotation(self) -> tuple[int,int,int]:
-        if self.shape == Shape.ROUND_HORZ:
-            return (90, 0, 0)
-        return (0, 0, 0)
+    def fillets_scoop_rim(self) -> bool:
+        """Whether a scoop's rim can be filleted where it crosses this slot."""
+        return self.item is None or self.item.fillet_scoop_rim
+
+    @cached_property
+    def item_solid(self) -> Part:
+        """The item's oriented solid, centered on X/Y with its bottom at Z=0. Built once, since
+        layout reads the footprint many times."""
+        if self.item is None:
+            raise ValueError(f'[!] item_solid: {self.shape} slot has no item')
+        solid = self.item.oriented()
+        bb = solid.bounding_box()
+        return solid.moved(Location((-bb.center().X, -bb.center().Y, -bb.min.Z)))
 
     @property
     def scaled_depth(self) -> float:
         return self.depth + SLOT_DEPTH_CLEARANCE
 
     @property
-    def scaled_diameter(self) -> float:
-        return self.diameter + SLOT_DIAMETER_CLEARANCE
-
-    @property
-    def scaled_radius(self) -> float:
-        return self.scaled_diameter / 2
-
-    @property
-    def x_footprint(self):
+    def x_footprint(self) -> float:
         """Slot's profile along the X-axis."""
-        return self.scaled_diameter
+        if self.item is not None:
+            return self.item_solid.bounding_box().size.X
+        return self.width
 
     @property
     def y_footprint(self) -> float:
-        if self.shape == Shape.ROUND_HORZ:
-            return self.scaled_depth
-        return self.scaled_diameter
+        """Slot's profile along the Y-axis."""
+        if self.item is not None:
+            return self.item_solid.bounding_box().size.Y
+        return self.length
 
     @property
     def z(self) -> float:
         """
         How far to offset the slot below (-Z) work surface's top face.
 
-        --> ROUND_VERT offset by their depth.
-        --> ROUND_HORZ offset by z_offset or half their scaled depth if not specified.
+        --> HORIZONTAL items sink by half their height, so they're cut halfway; z_offset moves
+            them further down.
+        --> VERTICAL items sink by their full height (half with --draw-solids, to show them).
+        --> PRISM_RECT sinks by its scaled depth.
         """
-        if self.shape == Shape.ROUND_HORZ:
-            # default 0.0 --> slot will cut -Z by half its diameter
-            return self.z_offset
-        if not self.debug:
-            return self.scaled_depth
-        # places slots above surface for debugging
-        return self.scaled_depth * .5
+        if self.item is not None:
+            height = self.item_solid.bounding_box().size.Z
+            if self.item.orientation is Orientation.HORIZONTAL:
+                return height / 2 + self.z_offset
+            return height if not self.debug else height * .5
+        return self.scaled_depth
 
     def build(self) -> None:
         """Build the slot's shape using build123d."""
-        if self.shape in (Shape.ROUND_VERT, Shape.ROUND_HORZ):
-            Cylinder(
-                self.scaled_radius,
-                self.scaled_depth,
-                rotation=self.built_rotation,
-                align=self.built_align,
-                mode=self.built_mode
-            )
+        if self.item is not None:
+            add(self.item_solid, mode=self.built_mode)
         elif self.shape == Shape.PRISM_RECT:
             Box(
                 # TODO --> scaled
-                # TODO --> center align both axes
                 self.width,
                 self.length,
                 self.depth,
-                align=self.built_align,
+                align=(Align.CENTER, Align.CENTER, Align.MIN),
                 mode=Mode.SUBTRACT
             )
         else:
@@ -394,16 +382,19 @@ class Slot:
         if self.scoop.mode is not SlotScoopMode.SLOT_SCOOP:
             return
         self.scoop.log_build(coords)
+        if not self.fillets_scoop_rim:
+            logger.warning(f'scoop on a {type(self.item).__name__} slot; not filleting its rim')
         with Locations(coords):
-            self.scoop.build(self.built_mode)
+            self.scoop.build(self.built_mode, round_rim=self.fillets_scoop_rim)
 
     def default_scoop(self) -> SlotScoop:
-        """Single-slot scoop: flat bottom width of slot, as deep as its radius."""
+        """Single-slot scoop: flat bottom width of slot, as deep as half that width."""
         return SlotScoop(
-            flat_width=self.scaled_diameter,
+            flat_width=self.x_footprint,
             wall_width=SLOT_SCOOP_WALL_WIDTH,
-            depth=self.scaled_radius,
+            depth=self.x_footprint / 2,
             length=SLOT_SCOOP_LENGTH,
+            mode=SlotScoopMode.SLOT_SCOOP,
         )
 
     def log_build(self, coords: tuple) -> None:
@@ -413,9 +404,10 @@ class Slot:
         logger.debug(f'|    shape: {self.shape}')
         logger.debug(f'|   slot_z: {round(self.z, 3)}')
         logger.debug('|   coords: x={}, y={}, z={}'.format(*(round(c, 3) for c in coords)))
-        logger.debug(f'| diameter: {round(self.scaled_diameter, 3)}')
-        logger.debug(f'|    depth: {round(self.scaled_depth, 3)}')
+        if self.item is not None:
+            logger.debug(f'|     item: {self.item}')
+        else:
+            logger.debug(f'|     size: {self.width} x {self.length} x {round(self.scaled_depth, 3)}')
         logger.debug(f'|     mode: {self.built_mode}')
-        logger.debug(f'| rotation: {self.built_rotation}')
 
 

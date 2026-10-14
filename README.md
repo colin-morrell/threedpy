@@ -94,7 +94,7 @@ storage_block:
     y: 3
     z: 3
     global:
-        shape: 'round_vert'
+        shape: 'cylinder'
 rows:
     - slots:
         - {diameter: 14.2, depth: 14.0, label: '10'}
@@ -111,3 +111,21 @@ name defaults to the filename.
 `global` keys are defaults for every slot, row-level keys are defaults for that row's slots, and
 values on a slot override both. A top-level `slots` list can be used instead of `rows` for a
 single row. Quote labels that look like numbers (`'10'`), or YAML reads them as numbers.
+
+Every slot needs a `shape`, set at any of those levels. `cylinder` takes `diameter` and `depth`;
+`socket_extension` takes `total_length`; `prism_rect` takes `width`, `length` and `depth`.
+`cylinder` and `socket_extension` also take an `orientation`: `vertical` (the default; standing
+up) or `horizontal`, laid on its side with a `rotation` (`up`, the default, `down`, `left` or
+`right`) for the way its top points. E.g. socket extensions laid along Y, one pointing down:
+
+```yaml
+storage_block:
+    global:
+        shape: 'socket_extension'
+        orientation: 'horizontal'
+slots:
+    - {total_length: 50.7, label: '2"'}
+    - {total_length: 76.2, rotation: 'down', label: '3"'}
+```
+
+`cylinder` and `socket_extension` slots get the same clearance, set in `constants.py`.

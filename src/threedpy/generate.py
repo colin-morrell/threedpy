@@ -9,17 +9,16 @@ from build123d import (
 from yacv_server import show
 
 from threedpy.constants import PREVIEW_GAP
+from threedpy.io import load_config, load_from_path
 from threedpy.storage import (
     StorageBin,
     StorageBlock,
     StorageBlockType,
-    load_config,
-    load_from_path,
 )
 from threedpy.util import export_as_stl
 
 # yacv preview colors from config.yaml; unset keys fall back to yacv's defaults
-# re-read on every %run since this module is re-executed but threedpy.storage isn't
+# re-read on every %run since this module is re-executed but threedpy.io isn't
 CONFIG = load_config()
 SHOW_KWARGS = {
     'vertices': False,
