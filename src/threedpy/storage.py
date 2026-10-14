@@ -354,7 +354,7 @@ class StorageBin(Storage):
 
             return part
 
-    def _build_base(self):
+    def _build_base(self, arrange: bool = False):
         base = build_gf_base(int(self.x), int(self.y))
         _bin = Bin(
             base,
