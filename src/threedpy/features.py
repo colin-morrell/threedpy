@@ -224,7 +224,7 @@ class LabelMode(Enum):
 class Label:
     """Label.
 
-    Embossed label, 1mm tall, centered on its Slot or Row.
+    Embossed label, 1mm tall, centered on its Slot or BlockRow.
     """
 
     font_path = FONT_PATH
@@ -358,21 +358,23 @@ class Slot:
             return height if not self.debug else height * .5
         return self.scaled_depth
 
-    def build(self) -> None:
-        """Build the slot's shape using build123d."""
-        if self.item is not None:
-            add(self.item_solid, mode=self.built_mode)
-        elif self.shape == Shape.PRISM_RECT:
-            Box(
-                # TODO --> scaled
-                self.width,
-                self.length,
-                self.depth,
-                align=(Align.CENTER, Align.CENTER, Align.MIN),
-                mode=Mode.SUBTRACT
-            )
-        else:
-            raise ValueError(f'[!] invalid slot shape: {self.shape}')
+    def build(self, surface_z: float) -> None:
+        """Build the slot's shape using build123d, sunk z below the work surface at surface_z."""
+        coords = (self.x, self.y, surface_z - self.z)
+        self.log_build(coords)
+        with Locations(coords):
+            if self.item is not None:
+                add(self.item_solid, mode=self.built_mode)
+            elif self.shape == Shape.PRISM_RECT:
+                Box(
+                    self.width,
+                    self.length,
+                    self.depth,
+                    align=(Align.CENTER, Align.CENTER, Align.MIN),
+                    mode=Mode.SUBTRACT
+                )
+            else:
+                raise ValueError(f'[!] invalid slot shape: {self.shape}')
 
     def build_label(self, top_face, coords: tuple) -> None:
         if self.label.mode is LabelMode.SLOT_LABEL:
