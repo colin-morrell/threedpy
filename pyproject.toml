@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-threedpy = "threedpy.generate:main"
+threedpy = "threedpy.cli:main"
 
 [build-system]
 # pin to the installed uv's minor version (uv --version)

@@ -9,9 +9,8 @@ from build123d import (
 from yacv_server import show
 
 from threedpy.constants import PREVIEW_GAP
-from threedpy.io import load_config, load_from_path
+from threedpy.io import export_as_stl, load_config, load_from_path
 from threedpy.storage import Storage, StorageBlockType
-from threedpy.util import export_as_stl
 
 # yacv preview colors from config.yaml; unset keys fall back to yacv's defaults
 # re-read on every %run since this module is re-executed but threedpy.io isn't
@@ -147,7 +146,7 @@ def configure_logging(debug: bool) -> None:
     if not logging.getLogger().handlers:
         logging.basicConfig(level=logging.WARNING)
     level = logging.DEBUG if debug else logging.INFO
-    # '__main__' is generate.py itself when run directly or with %run
+    # '__main__' is cli.py itself when run directly or with %run
     for name in ('threedpy', '__main__'):
         logging.getLogger(name).setLevel(level)
 
