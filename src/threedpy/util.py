@@ -1,16 +1,10 @@
 import logging
-import os
 from collections.abc import Iterable, Iterator
 
-from build123d.exporters3d import export_stl
 from gridfinity_build123d import (
     BaseEqual,
     Bin,
     BottomCorners,
-    Compartment,
-    CompartmentsEqual,
-    Label,
-    Scoop,
 )
 from gridfinity_build123d import (
     GridfinityRefinedMagnetHolePressfit as MagHole,
@@ -145,37 +139,6 @@ def build_gf_box(grid_x: int, grid_y: int, grid_z: int):
     )
 
     return gf_box
-
-
-def export_as_stl(part, path: str | os.PathLike[str]) -> None:
-    """Export a BuildPart's part to an STL file, validating the path first.
-
-    --> ValueError: path is empty, is a directory, or doesn't end in .stl
-    --> FileNotFoundError: path's parent directory doesn't exist
-    --> PermissionError: path (or its parent directory) isn't writable
-    --> OSError: the export itself failed
-    """
-    path = os.path.expanduser(os.fspath(path))
-    if not path:
-        raise ValueError('[!] export path is empty')
-    if os.path.isdir(path):
-        raise ValueError(f'[!] export path is a directory: {path}')
-    if os.path.splitext(path)[1].lower() != '.stl':
-        raise ValueError(f'[!] export path must end in .stl: {path}')
-
-    parent = os.path.dirname(os.path.abspath(path))
-    if not os.path.isdir(parent):
-        raise FileNotFoundError(f'[!] export directory does not exist: {parent}')
-    if os.path.exists(path):
-        if not os.access(path, os.W_OK):
-            raise PermissionError(f'[!] export path is not writable: {path}')
-        logger.warning(f'overwriting existing file: {path}')
-    elif not os.access(parent, os.W_OK):
-        raise PermissionError(f'[!] export directory is not writable: {parent}')
-
-    if not export_stl(part.part, path):
-        raise OSError(f'[!] failed to export STL: {path}')
-    logger.info(f'exported STL to {path}')
 
 
 # %%

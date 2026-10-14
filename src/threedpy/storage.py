@@ -1,7 +1,7 @@
 import logging
 import math
-from collections.abc import Iterable, Iterator
 from abc import ABC, abstractmethod
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum, Flag, auto
 
@@ -25,13 +25,12 @@ from threedpy.constants import (
     GFU_GRID,
     GFU_HEIGHT,
     LABEL_TAB_WIDTH,
+    SCOOP_RADIUS,
     SLOT_SCOOP_FILLET_RADIUS,
     SLOT_SCOOP_WALL_WIDTH,
-    SCOOP_RADIUS,
 )
-from threedpy.features import Label, LabelMode, SlotScoop, SlotScoopMode, Slot
+from threedpy.features import Label, LabelMode, Slot, SlotScoop, SlotScoopMode
 from threedpy.util import DoublyLinkedList, build_gf_base, build_gf_box
-
 
 logger = logging.getLogger(__name__)
 
@@ -354,7 +353,7 @@ class StorageBin(Storage):
 
             return part
 
-    def _build_base(self, arrange: bool = False):
+    def _build_base(self, arrange: bool = False):  # noqa: ARG002
         base = build_gf_base(int(self.x), int(self.y))
         _bin = Bin(
             base,

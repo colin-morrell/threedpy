@@ -25,7 +25,6 @@ from build123d import (
 
 from threedpy.constants import SLOT_DEPTH_CLEARANCE, SLOT_DIAMETER_CLEARANCE
 
-
 logger = logging.getLogger(__name__)
 
 

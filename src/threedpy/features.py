@@ -32,10 +32,10 @@ from build123d import (
 
 from threedpy.constants import (
     FONT_PATH,
+    SLOT_DEPTH_CLEARANCE,
     SLOT_SCOOP_FILLET_RADIUS,
     SLOT_SCOOP_LENGTH,
     SLOT_SCOOP_WALL_WIDTH,
-    SLOT_DEPTH_CLEARANCE,
 )
 from threedpy.item import ITEM_TYPES, Item, Orientation, Shape
 
