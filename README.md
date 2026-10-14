@@ -114,9 +114,10 @@ single row. Quote labels that look like numbers (`'10'`), or YAML reads them as 
 
 Every slot needs a `shape`, set at any of those levels. `cylinder` takes `diameter` and `depth`;
 `socket_extension` takes `total_length`; `prism_rect` takes `width`, `length` and `depth`.
-`cylinder` and `socket_extension` also take an `orientation`: `vertical` (the default; standing
-up) or `horizontal`, laid on its side with a `rotation` (`up`, the default, `down`, `left` or
-`right`) for the way its top points. E.g. socket extensions laid along Y, one pointing down:
+`cylinder` and `socket_extension` also take an `orientation`, `vertical` (the default; standing
+up) or `horizontal` (laid on its side, top towards +Y), and a `rotation` that then turns it as seen
+from above: `up` (the default; no turn), `down`, `left` or `right`. A horizontal item's top points
+that way; a vertical item's +Y side does. E.g. socket extensions laid along Y, one pointing down:
 
 ```yaml
 storage_block:
