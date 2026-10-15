@@ -23,6 +23,7 @@ from build123d import (
     Plane,
     Select,
     Text,
+    Vector,
     add,
     edges,
     extrude,
@@ -33,17 +34,17 @@ from build123d import (
 
 from threedpy.constants import FONT_PATH
 from threedpy.defaults import (
-    DRAW_SOLIDS_SINK_RATIO,
-    FONT_SIZE,
-    LABEL_HEIGHT,
-    SCOOP_RIM_TOLERANCE,
-    SLOT_DEPTH_CLEARANCE,
     BLOCK_SCOOP_DEPTH_RATIO,
     BLOCK_SCOOP_FILLET_FALLBACK_RADIUS,
     BLOCK_SCOOP_FILLET_RADIUS,
     BLOCK_SCOOP_FLAT_WIDTH,
     BLOCK_SCOOP_LENGTH,
     BLOCK_SCOOP_WALL_WIDTH,
+    DRAW_SOLIDS_SINK_RATIO,
+    FONT_SIZE,
+    LABEL_HEIGHT,
+    SCOOP_RIM_TOLERANCE,
+    SLOT_DEPTH_CLEARANCE,
 )
 from threedpy.item import ITEM_TYPES, Item, Orientation, Rotation, Shape
 
@@ -199,11 +200,11 @@ class BlockScoop:
                 continue
             if radius != self.fillet_radius:
                 logger.warning(
-                    f'scoop rim fillet (radius {self.fillet_radius}) failed, used {radius}'
+                    f'[!] scoop rim fillet (radius {self.fillet_radius}) failed, used {radius}'
                 )
             return
         logger.warning(
-            f"scoop rim fillet (radius {', '.join(map(str, radii))}) failed, leaving it sharp"
+            f"[!] scoop rim fillet (radius {', '.join(map(str, radii))}) failed, leaving it sharp"
         )
 
     def fill_manual_defaults(self) -> None:
@@ -340,14 +341,25 @@ class Slot:
         return Mode.ADD
 
     @cached_property
-    def item_solid(self) -> Part:
-        """The item's oriented solid, centered on X/Y with its bottom at Z=0. Built once, since
-        layout reads the footprint many times."""
+    def _placed_item(self) -> tuple[Part, Vector]:
+        """The item's oriented solid, centered on X/Y with its bottom at Z=0, and its size. Both
+        are computed once: layout reads them many times, and an exact bounding box of a filleted
+        item takes OCCT a noticeable fraction of a second."""
         if self.item is None:
             raise ValueError(f'[!] item_solid: {self.shape} slot has no item')
         solid = self.item.oriented()
         bb = solid.bounding_box()
-        return solid.moved(Location((-bb.center().X, -bb.center().Y, -bb.min.Z)))
+        return solid.moved(Location((-bb.center().X, -bb.center().Y, -bb.min.Z))), bb.size
+
+    @property
+    def item_solid(self) -> Part:
+        """The item's oriented solid, centered on X/Y with its bottom at Z=0."""
+        return self._placed_item[0]
+
+    @property
+    def item_size(self) -> Vector:
+        """X/Y/Z size of item_solid."""
+        return self._placed_item[1]
 
     @property
     def scaled_depth(self) -> float:
@@ -359,6 +371,26 @@ class Slot:
         if self.item is None:
             return BLOCK_SCOOP_FILLET_RADIUS
         return self.item.scoop_fillet_radius
+
+    @property
+    def scoop_span(self) -> tuple[float, float] | None:
+        """The item's scoop_span() for a HORIZONTAL item, or None to center scoops on the slot."""
+        if self.item is None or self.item.orientation is not Orientation.HORIZONTAL:
+            return None
+        return self.item.scoop_span()
+
+    @property
+    def scoop_offset(self) -> tuple[float, float]:
+        """X/Y shift from the slot's center to the center of its item's scoop_span(), along the
+        item's length; (0, 0) when the item has no span."""
+        span = self.scoop_span
+        if span is None or self.item is None:
+            return (0.0, 0.0)
+        dx, dy = self.item.rotation.direction
+        size = self.item_size
+        # item_solid is centered on X/Y, so its base sits half its length back from the center
+        along = (span[0] + span[1]) / 2 - (size.X if dx else size.Y) / 2
+        return (dx * along, dy * along)
 
     @property
     def scoop_rotation(self) -> float:
@@ -389,14 +421,14 @@ class Slot:
     def x_footprint(self) -> float:
         """Slot's profile along the X-axis."""
         if self.item is not None:
-            return self.item_solid.bounding_box().size.X
+            return self.item_size.X
         return self.width
 
     @property
     def y_footprint(self) -> float:
         """Slot's profile along the Y-axis."""
         if self.item is not None:
-            return self.item_solid.bounding_box().size.Y
+            return self.item_size.Y
         return self.length
 
     @property
@@ -410,7 +442,7 @@ class Slot:
         --> PRISM_RECT sinks by its scaled depth.
         """
         if self.item is not None:
-            height = self.item_solid.bounding_box().size.Z
+            height = self.item_size.Z
             if self.item.orientation is Orientation.HORIZONTAL:
                 return height / 2 + self.z_offset
             return height if not self.debug else height * DRAW_SOLIDS_SINK_RATIO
@@ -443,17 +475,40 @@ class Slot:
     def build_scoop(self, coords: tuple) -> None:
         if self.scoop.type is not BlockScoopType.SLOT:
             return
+        self.check_scoop_length()
+        dx, dy = self.scoop_offset
+        coords = (coords[0] + dx, coords[1] + dy, *coords[2:])
         self.scoop.log_build(coords)
         with Locations(coords):
             self.scoop.build(self.built_mode, rotation=self.scoop_rotation)
 
+    def check_scoop_length(self) -> None:
+        """Warn when the slot scoop, rounded rim included, reaches the ends of its item's
+        scoop_span()."""
+        span = self.scoop_span
+        reach = self.scoop.length + 2 * self.scoop.fillet_radius
+        if span is not None and reach >= span[1] - span[0]:
+            logger.warning(
+                f"slot '{self.label.label_text}': scoop ({reach:.2f}mm with its rim) reaches the "
+                f'ends of its {type(self.item).__name__} span ({span[1] - span[0]:.2f}mm)'
+            )
+
     def default_scoop(self) -> BlockScoop:
-        """Single-slot scoop: flat bottom width of slot, as deep as half that width."""
+        """Single-slot scoop: flat bottom width of slot, as deep as half that width, and as long as
+        its item's scoop_span() less its rim fillet and the item's margin at each end (or the
+        default length)."""
+        span = self.scoop_span
+        if span is None or self.item is None:
+            length = BLOCK_SCOOP_LENGTH
+        else:
+            # the rim fillet rounds past each end of the scoop, so keep it off the span's ends too
+            reserve = self.scoop_fillet_radius + self.item.scoop_margin
+            length = span[1] - span[0] - 2 * reserve
         return BlockScoop(
             flat_width=self.scoop_width,
             wall_width=BLOCK_SCOOP_WALL_WIDTH,
             depth=self.scoop_width * BLOCK_SCOOP_DEPTH_RATIO,
-            length=BLOCK_SCOOP_LENGTH,
+            length=length,
             fillet_radius=self.scoop_fillet_radius,
             type=BlockScoopType.SLOT,
         )

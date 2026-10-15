@@ -11,8 +11,13 @@ from dataclasses import dataclass
 import pytest
 from build123d import Align, Axis, Box, BuildPart, Mode, Part, Plane
 
-from threedpy.defaults import SLOT_DEPTH_CLEARANCE, SLOT_DIAMETER_CLEARANCE
-from threedpy.features import Label, LabelType, Slot, BlockScoop, BlockScoopType
+from threedpy.defaults import (
+    BLOCK_SCOOP_LENGTH,
+    ROW_SCOOP_LENGTH_RATIO,
+    SLOT_DEPTH_CLEARANCE,
+    SLOT_DIAMETER_CLEARANCE,
+)
+from threedpy.features import BlockScoop, BlockScoopType, Label, LabelType, Slot
 from threedpy.io import load_storage_block
 from threedpy.item import (
     CylinderItem,
@@ -129,6 +134,18 @@ class TestItemDimensions:
         expected = Drive.THREE_EIGHTHS.dimensions['bot_rad'] + SLOT_DIAMETER_CLEARANCE / 2
         assert item.bot_rad == pytest.approx(expected)
 
+    @pytest.mark.parametrize(('drive', 'length', 'expected'), [
+        ('1/4', 50.7, (17.988, 41.6)),
+        ('3/8', 76.3, (22.054, 62.5)),
+    ])
+    def test_scoop_span_is_the_straight_middle(self, drive, length, expected):
+        item = SocketExtension(drive=drive, total_length=length)
+        assert item.scoop_span() == pytest.approx(expected, abs=1e-3)
+
+    def test_scoop_span_needs_a_long_enough_middle(self):
+        with pytest.raises(ValueError, match='too short for a slot scoop'):
+            SocketExtension(drive='1/4', total_length=25).scoop_span()
+
     def test_drive_fills_only_unset_dimensions(self):
         item = SocketExtension(drive='1/4', total_length=50.7, bot_len=20)
         assert item.drive is Drive.QUARTER_INCH
@@ -192,6 +209,42 @@ class TestSlotMeasurements:
                                rotation=rotation)
         slot = Slot(shape='socket_extension', item=item)
         assert slot.scoop_width == pytest.approx(2 * item.mid_rad, abs=1e-3)
+
+    @pytest.mark.parametrize(('rotation', 'direction'), [
+        ('up', (0, 1)), ('down', (0, -1)), ('left', (-1, 0)), ('right', (1, 0)),
+    ])
+    def test_extension_slot_scoop_centers_on_the_middle(self, rotation, direction):
+        item = SocketExtension(drive='1/4', total_length=50.7, orientation='horizontal',
+                               rotation=rotation)
+        slot = Slot(shape='socket_extension', item=item)
+        start, end = item.scoop_span()
+        along = (start + end) / 2 - item.total_length / 2
+        assert slot.scoop_offset == pytest.approx((direction[0] * along, direction[1] * along),
+                                                  abs=1e-3)
+        reserve = item.scoop_fillet_radius + item.scoop_margin
+        assert slot.default_scoop().length == pytest.approx(end - start - 2 * reserve)
+
+    @pytest.mark.parametrize('item', [
+        SocketExtension(drive='1/4', total_length=50.7),
+        CylinderItem(diameter=10, depth=40, orientation='horizontal'),
+    ], ids=['vertical extension', 'cylinder'])
+    def test_other_slot_scoops_stay_centered_at_the_default_length(self, item):
+        slot = Slot(shape='socket_extension' if isinstance(item, SocketExtension) else 'cylinder',
+                    item=item)
+        assert slot.scoop_offset == (0, 0)
+        assert slot.default_scoop().length == BLOCK_SCOOP_LENGTH
+
+    def test_scoop_reaching_the_middle_ends_warns(self, caplog):
+        item = SocketExtension(drive='1/4', total_length=50.7, orientation='horizontal')
+        slot = Slot(shape='socket_extension', item=item)
+        slot.scoop = slot.default_scoop()
+        with caplog.at_level(logging.WARNING):
+            slot.check_scoop_length()
+        assert 'reaches the ends' not in caplog.text
+        slot.scoop.length = 23
+        with caplog.at_level(logging.WARNING):
+            slot.check_scoop_length()
+        assert 'reaches the ends' in caplog.text
 
     def test_item_solid_is_centered_with_its_bottom_at_zero(self):
         item = CylinderItem(diameter=10, depth=40, orientation='horizontal')
@@ -380,6 +433,53 @@ class TestLayout:
         with caplog.at_level(logging.WARNING):
             b.validate_x_spacing()
         assert 'x_slot_spacing' in caplog.text
+
+
+class TestRowScoopPlacement:
+    def row(self, slots):
+        data = {
+            'storage_block': {'x': 2, 'y': 4, 'z': 3, 'global': {'orientation': 'horizontal'}},
+            'rows': [{'row_scoop': True, 'slots': slots}],
+        }
+        b = load_storage_block(data)
+        b.y_align_rows()
+        b.x_align_slots()
+        row = next(iter(b.rows))
+        return b, row
+
+    def extension(self, length, label):
+        return {'shape': 'socket_extension', 'drive': '3/8', 'total_length': length, 'label': label}
+
+    def test_shortest_extension_places_and_sizes_it(self):
+        b, row = self.row([self.extension(76.3, '3"'), self.extension(152.5, '6"')])
+        slot = row.scoop_slot
+        assert slot.label.label_text == '3"'
+        assert row.scoop_offset == pytest.approx(slot.scoop_offset)
+        assert row.scoop_offset[1] > 0
+        start, end = slot.scoop_span
+        scoop = row.default_scoop(b.x_mm)
+        reserve = scoop.fillet_radius + slot.item.scoop_margin
+        assert scoop.length == pytest.approx(end - start - 2 * reserve)
+
+    def test_shortest_cylinder_keeps_it_centered(self):
+        cylinder = {'shape': 'cylinder', 'diameter': 12, 'depth': 40, 'label': 'C'}
+        b, row = self.row([self.extension(76.3, 'E'), cylinder])
+        assert row.scoop_slot.label.label_text == 'C'
+        assert row.scoop_offset == (0, 0)
+        assert row.default_scoop(b.x_mm).length == pytest.approx(
+            row.y_min_slot * ROW_SCOOP_LENGTH_RATIO
+        )
+
+    def test_scoop_reaching_the_middle_ends_warns(self, caplog):
+        b, row = self.row([self.extension(76.3, '3"'), self.extension(152.5, '6"')])
+        row.scoop.fill_unset(row.default_scoop(b.x_mm))
+        with caplog.at_level(logging.WARNING):
+            row.check_scoop_length()
+        assert 'reaches the ends' not in caplog.text
+        row.scoop.length = 45
+        with caplog.at_level(logging.WARNING):
+            row.check_scoop_length()
+        assert 'reaches the ends' in caplog.text
 
 
 class TestBinValidation:

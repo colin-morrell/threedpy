@@ -30,6 +30,7 @@ from threedpy.defaults import (
     SLOT_DIAMETER_CLEARANCE,
     BLOCK_SCOOP_FILLET_RADIUS,
     SOCKET_EXTENSION_SCOOP_FILLET_RADIUS,
+    SOCKET_EXTENSION_SCOOP_MARGIN,
 )
 
 logger = logging.getLogger(__name__)
@@ -62,7 +63,7 @@ class Drive(Enum):
 
     @property
     def dimensions(self) -> dict[str, float]:
-        """SocketExtension dimensions (mm, before clearance) for this drive size; 0 = unmeasured."""
+        """SocketExtension dimensions (mm, before clearance) per drive size."""
         match self:
             case Drive.QUARTER_INCH:
                 return {
@@ -111,6 +112,19 @@ class Rotation(Enum):
     DOWN = 'down'
     LEFT = 'left'
     RIGHT = 'right'
+
+    @property
+    def direction(self) -> tuple[int, int]:
+        """Unit X/Y direction this rotation points on the work surface."""
+        match self:
+            case Rotation.UP:
+                return (0, 1)
+            case Rotation.LEFT:
+                return (-1, 0)
+            case Rotation.DOWN:
+                return (0, -1)
+            case Rotation.RIGHT:
+                return (1, 0)
 
     @property
     def spin(self) -> Rot:
@@ -169,6 +183,8 @@ class Item(ABC):
 
     # rim fillet radius for scoops over this item's slot
     scoop_fillet_radius: ClassVar[float] = BLOCK_SCOOP_FILLET_RADIUS
+    # gap kept between a slot scoop's rounded rim and each end of scoop_span()
+    scoop_margin: ClassVar[float] = 0.0
 
     orientation: Orientation = DEFAULT_ORIENTATION
     rotation: Rotation = DEFAULT_ROTATION
@@ -193,6 +209,11 @@ class Item(ABC):
         l = f'[.] {type(self).__name__}.build(): {self.orientation}, {self.rotation}'
         logger.info(l)
         return self._build()
+
+    def scoop_span(self) -> tuple[float, float] | None:
+        """Start and end (mm along the item as built, from its base) of the stretch a slot scoop
+        over a HORIZONTAL item should stay within, or None to center the scoop on the slot."""
+        return None
 
     @abstractmethod
     def _build(self) -> Part:
@@ -250,6 +271,7 @@ class SocketExtension(Item):
     """
 
     scoop_fillet_radius: ClassVar[float] = SOCKET_EXTENSION_SCOOP_FILLET_RADIUS
+    scoop_margin: ClassVar[float] = SOCKET_EXTENSION_SCOOP_MARGIN
 
     drive: Drive = Drive.NONE
     bot_rad: float = 0.0
@@ -287,6 +309,20 @@ class SocketExtension(Item):
         self.top_width += self.diameter_clearance
         self.total_length += self.depth_clearance
 
+    def scoop_span(self) -> tuple[float, float]:
+        """The middle's straight stretch: past the cone's fillet at the bottom end and the
+        middle's top fillet at the top end."""
+        # a fillet of radius r between faces at angle a blends r * tan(a / 2) into each face
+        cone_angle = math.atan((self.bot_rad - self.mid_rad) / self.cone)
+        cone_blend = self.cone_fillet_rad * math.tan(cone_angle / 2)
+        start = self.bot_len + self.cone + cone_blend
+        end = self.total_length - self.top_len - self.mid_top_fillet_rad
+        if end - start <= 2 * self.scoop_margin:
+            raise ValueError(
+                f'[!] SocketExtension: middle ({end - start:.2f}mm) too short for a slot scoop'
+            )
+        return start, end
+
     @property
     def top_fillet_rad(self) -> float:
         """Rounds the box's vertical edges so its corners sit on the mid cylinder's surface."""
@@ -295,6 +331,7 @@ class SocketExtension(Item):
     def _build(self) -> Part:
         #logger.info('[.] building')
         with BuildPart() as part:
+            # bottom
             Cylinder(
                 self.bot_rad,
                 self.bot_len,
@@ -302,6 +339,7 @@ class SocketExtension(Item):
                 mode=Mode.ADD
             )
             fillet(part.edges().sort_by(Axis.Z)[0], radius=self.bot_fillet_rad)
+            # transition
             with Locations(part.faces().sort_by(Axis.Z)[-1]):
                 Cone(
                     self.bot_rad,
@@ -310,6 +348,7 @@ class SocketExtension(Item):
                     align=(Align.CENTER, Align.CENTER, Align.MIN),
                     mode=Mode.ADD
                 )
+            # middle
             with Locations(part.faces().sort_by(Axis.Z)[-1]):
                 Cylinder(
                     self.mid_rad,
@@ -324,7 +363,8 @@ class SocketExtension(Item):
             fillet(taper_edges, radius=self.cone_fillet_rad)
             # before the square end is added: its corners meet this edge, so filleting after fails
             fillet(part.edges().sort_by(Axis.Z)[-1], radius=self.mid_top_fillet_rad)
-            # extruded, since filleting the box after fusing fails where its corners meet the cylinder
+            # top
+            # extruded bc filleting the box after fusing fails where its corners meet the cylinder
             with BuildSketch(part.faces().sort_by(Axis.Z)[-1]):
                 RectangleRounded(self.top_width, self.top_width, self.top_fillet_rad)
             extrude(amount=self.top_len)

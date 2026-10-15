@@ -196,6 +196,18 @@ class BlockRow:
         return min((slot.y_footprint for slot in self.slots), default=0.0)
 
     @property
+    def scoop_slot(self) -> Slot:
+        """The slot that places the row scoop: the one with the smallest Y footprint (the first,
+        on a tie)."""
+        return min(self.slots, key=lambda slot: slot.y_footprint)
+
+    @property
+    def scoop_offset(self) -> tuple[float, float]:
+        """X/Y shift from the row's scoop position to its scoop_slot's scoop center: (0, 0) unless
+        that slot's item has a scoop_span(), e.g. a socket extension's middle."""
+        return self.scoop_slot.scoop_offset
+
+    @property
     def y_scoop(self) -> float:
         """Y-position of scoops. Default: centered on row."""
         return self.y
@@ -238,13 +250,18 @@ class BlockRow:
         if not self.has_row_scoop or not len(self):
             return
         self.scoop.fill_unset(self.default_scoop(x_block_width))
+        self.check_scoop_length()
+        dx, dy = self.scoop_offset
+        coords = (coords[0] + dx, coords[1] + dy, *coords[2:])
         self.scoop.log_build(coords)
         with Locations(coords):
             self.scoop.build(Mode.ADD if self.debug else Mode.SUBTRACT)
 
     def default_scoop(self, x_block_width: float) -> BlockScoop:
         """Single-row scoop across its slots' scoop widths, as deep as half the widest one, with
-        the smallest rim fillet any of its slots allows."""
+        the smallest rim fillet any of its slots allows. Its length comes from its scoop_slot: that
+        slot's scoop_span() less the rim fillet and margin at each end, or a fraction of the slot's
+        Y footprint when it has no span."""
 
         radius = max((slot.scoop_width * BLOCK_SCOOP_DEPTH_RATIO for slot in self.slots), default=0.0)
         fillet_radius = min((slot.scoop_fillet_radius for slot in self.slots), default=0.0)
@@ -254,14 +271,35 @@ class BlockRow:
         # only take default width if it doesn't touch/exceed the edges
         scoop_wall_width = min(max_wall_width, BLOCK_SCOOP_WALL_WIDTH)
 
+        span = self.scoop_slot.scoop_span
+        item = self.scoop_slot.item
+        if span is None or item is None:
+            length = self.y_min_slot * ROW_SCOOP_LENGTH_RATIO
+        else:
+            # the rim fillet rounds past each end of the scoop, so keep it off the span's ends too
+            length = span[1] - span[0] - 2 * (fillet_radius + item.scoop_margin)
+
         return BlockScoop(
             flat_width=self.x_scoop_span,
             wall_width=scoop_wall_width,
             depth=radius,
-            length=self.y_min_slot * ROW_SCOOP_LENGTH_RATIO,
+            length=length,
             fillet_radius=fillet_radius,
             type=BlockScoopType.ROW
         )
+
+    def check_scoop_length(self) -> None:
+        """Warn when the row scoop, rounded rim included, reaches the ends of its scoop_slot's
+        scoop_span()."""
+        slot = self.scoop_slot
+        span = slot.scoop_span
+        reach = self.scoop.length + 2 * self.scoop.fillet_radius
+        if span is not None and reach >= span[1] - span[0]:
+            logger.warning(
+                f"row '{self.name}': scoop ({reach:.2f}mm with its rim) reaches the ends of slot "
+                f"'{slot.label.label_text}' {type(slot.item).__name__} span "
+                f'({span[1] - span[0]:.2f}mm)'
+            )
 
     def __iter__(self) -> Iterator[Slot]:
         return iter(self.slots)
