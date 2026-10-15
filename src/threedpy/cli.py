@@ -8,7 +8,7 @@ from build123d import (
 )
 from yacv_server import show
 
-from threedpy.constants import PREVIEW_GAP
+from threedpy.defaults import PREVIEW_GAP, PREVIEW_VERTICES
 from threedpy.io import export_as_stl, load_config, load_from_path
 from threedpy.storage import Storage, StorageBlockType
 
@@ -16,7 +16,7 @@ from threedpy.storage import Storage, StorageBlockType
 # re-read on every %run since this module is re-executed but threedpy.io isn't
 CONFIG = load_config()
 SHOW_KWARGS = {
-    'vertices': False,
+    'vertices': PREVIEW_VERTICES,
     **{key: CONFIG[key] for key in ('color_faces', 'color_edges') if CONFIG.get(key)}
 }
 
@@ -31,6 +31,7 @@ def build_part(part: Storage, arrange: bool = False):
 
 def part_from_args(args: argparse.Namespace, in_path: str) -> Storage:
     """Build a StorageBin or StorageBlock from the input YAML. CLI args override YAML settings."""
+    logger.info('[.] part_from_args()')
     part = load_from_path(
         in_path,
         block_type=args.type,
@@ -155,6 +156,8 @@ def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     configure_logging(getattr(args, 'debug', False))
 
+    logger.info('[.] init')
+
     names = block_names(args.in_paths)
     storage = [part_from_args(args, path) for path in args.in_paths]
     parts = [build_part(part, arrange=args.arrange) for part in storage]
@@ -166,6 +169,8 @@ def main(argv: list[str] | None = None) -> None:
         if not out_dir:
             sys.exit('[!] -o needs out_dir set in config.yaml')
         export_parts(parts, names, out_dir)
+
+    logger.info('[+] done.')
 
 # %%
 

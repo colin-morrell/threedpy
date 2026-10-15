@@ -8,7 +8,7 @@ viewer is driven and nothing is written outside pytest's tmp_path.
 import pytest
 
 from threedpy import cli
-from threedpy.constants import PREVIEW_GAP
+from threedpy.defaults import PREVIEW_GAP
 
 BLOCK_YAML = """\
 storage_block:

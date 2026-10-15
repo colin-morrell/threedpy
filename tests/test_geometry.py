@@ -11,10 +11,18 @@ from dataclasses import dataclass
 import pytest
 from build123d import Align, Axis, Box, BuildPart, Mode, Part, Plane
 
-from threedpy.constants import SLOT_DEPTH_CLEARANCE, SLOT_DIAMETER_CLEARANCE
-from threedpy.features import Label, LabelMode, Slot, SlotScoop, SlotScoopMode
+from threedpy.defaults import SLOT_DEPTH_CLEARANCE, SLOT_DIAMETER_CLEARANCE
+from threedpy.features import Label, LabelType, Slot, BlockScoop, BlockScoopType
 from threedpy.io import load_storage_block
-from threedpy.item import CylinderItem, Item, Orientation, Rotation, Shape, SocketExtension
+from threedpy.item import (
+    CylinderItem,
+    Drive,
+    Item,
+    Orientation,
+    Rotation,
+    Shape,
+    SocketExtension,
+)
 from threedpy.storage import StorageBin
 
 # surface block the slots are cut into: top face at Z=0
@@ -103,17 +111,32 @@ class TestItemDimensions:
             CylinderItem(diameter=10)
 
     def test_socket_extension_size(self):
-        item = SocketExtension(total_length=50.7)
+        item = SocketExtension(drive='1/4', total_length=50.7)
         size = item.oriented().bounding_box().size
         assert size.X == pytest.approx(12.3 + SLOT_DIAMETER_CLEARANCE, abs=1e-4)
         assert size.Z == pytest.approx(50.7 + SLOT_DEPTH_CLEARANCE, abs=1e-4)
 
     def test_socket_extension_needs_total_length(self):
         with pytest.raises(ValueError, match='total_length'):
-            SocketExtension()
+            SocketExtension(drive='1/4')
+
+    def test_socket_extension_needs_a_drive(self):
+        with pytest.raises(ValueError, match='drive not specified'):
+            SocketExtension(total_length=50.7)
+
+    def test_three_eighths_drive_uses_its_dimensions(self):
+        item = SocketExtension(drive='3/8', total_length=76.3)
+        expected = Drive.THREE_EIGHTHS.dimensions['bot_rad'] + SLOT_DIAMETER_CLEARANCE / 2
+        assert item.bot_rad == pytest.approx(expected)
+
+    def test_drive_fills_only_unset_dimensions(self):
+        item = SocketExtension(drive='1/4', total_length=50.7, bot_len=20)
+        assert item.drive is Drive.QUARTER_INCH
+        assert item.bot_len == 20
+        assert item.top_len == Drive.QUARTER_INCH.dimensions['top_len']
 
     def test_socket_extension_square_end_corners_sit_on_the_shaft(self):
-        item = SocketExtension(total_length=50.7)
+        item = SocketExtension(drive='1/4', total_length=50.7)
         part = item.oriented()
         # section through the square end, below its top fillet
         z = item.total_length - item.top_len / 2
@@ -154,6 +177,21 @@ class TestSlotMeasurements:
         slot = Slot(shape='prism_rect', width=10, length=20, depth=5)
         assert (slot.x_footprint, slot.y_footprint) == (10, 20)
         assert slot.z == pytest.approx(5 + SLOT_DEPTH_CLEARANCE)
+
+    @pytest.mark.parametrize(('rotation', 'expected'), [
+        ('up', 0), ('down', 0), ('left', 90), ('right', 90),
+    ])
+    def test_scoops_turn_with_the_item(self, rotation, expected):
+        item = SocketExtension(drive='1/4', total_length=50.7, orientation='horizontal',
+                               rotation=rotation)
+        assert Slot(shape='socket_extension', item=item).scoop_rotation == expected
+
+    @pytest.mark.parametrize('rotation', ['up', 'right'])
+    def test_scoop_width_is_the_shaft_either_way(self, rotation):
+        item = SocketExtension(drive='1/4', total_length=50.7, orientation='horizontal',
+                               rotation=rotation)
+        slot = Slot(shape='socket_extension', item=item)
+        assert slot.scoop_width == pytest.approx(2 * item.mid_rad, abs=1e-3)
 
     def test_item_solid_is_centered_with_its_bottom_at_zero(self):
         item = CylinderItem(diameter=10, depth=40, orientation='horizontal')
@@ -207,15 +245,20 @@ class TestSlotBuild:
 # --- scoops and labels
 
 
-class TestSlotScoop:
-    def scoop(self, **kwargs) -> SlotScoop:
-        dims = {'flat_width': 10, 'wall_width': 5, 'depth': 4, 'length': 20}
-        return SlotScoop(**{**dims, 'mode': SlotScoopMode.SLOT_SCOOP, **kwargs})
+class TestBlockScoop:
+    def scoop(self, **kwargs) -> BlockScoop:
+        dims = {'flat_width': 10, 'wall_width': 5, 'depth': 4, 'length': 20, 'fillet_radius': 2.5}
+        return BlockScoop(**{**dims, 'type': BlockScoopType.SLOT, **kwargs})
 
     def test_size_comes_from_its_fields(self):
         with BuildPart() as part:
             self.scoop().build(Mode.ADD)
         assert bounds(part.part) == pytest.approx((-10, 10, -10, 10, -4, 0), abs=1e-6)
+
+    def test_rotation_turns_it_about_z(self):
+        with BuildPart() as part:
+            self.scoop(length=30).build(Mode.ADD, rotation=90)
+        assert bounds(part.part) == pytest.approx((-15, 15, -10, 10, -4, 0), abs=1e-6)
 
     def test_width(self):
         assert self.scoop().width == 20
@@ -224,9 +267,9 @@ class TestSlotScoop:
         with pytest.raises(ValueError, match='width'):
             _ = self.scoop(wall_width=0).width
 
-    def test_mode_none_raises(self):
+    def test_type_none_raises(self):
         with pytest.raises(ValueError, match='NONE'):
-            self.scoop(mode=SlotScoopMode.NONE).build()
+            self.scoop(type=BlockScoopType.NONE).build()
 
     def test_unset_dimension_raises(self):
         with pytest.raises(ValueError, match='unset dimension.*depth'):
@@ -234,8 +277,32 @@ class TestSlotScoop:
 
     def test_fill_unset_fills_only_zeros(self):
         scoop = self.scoop(depth=0, length=0)
-        scoop.fill_unset(SlotScoop(flat_width=99, wall_width=99, depth=7, length=30))
+        scoop.fill_unset(BlockScoop(flat_width=99, wall_width=99, depth=7, length=30))
         assert (scoop.flat_width, scoop.wall_width, scoop.depth, scoop.length) == (10, 5, 7, 30)
+
+
+class TestManualScoop:
+    def build(self, scoops):
+        data = {
+            'storage_block': {'x': 2, 'y': 3, 'z': 3, 'manual_scoops': scoops},
+            'slots': [{'shape': 'cylinder', 'diameter': 10, 'depth': 5}],
+        }
+        return load_storage_block(data).build(arrange=True).part
+
+    def test_cut_at_its_position_and_rotation(self):
+        plain = self.build([])
+        spec = {'x': 20, 'y': 35, 'rotation': 90, 'length': 30, 'flat_width': 10, 'depth': 4}
+        cut = (plain - self.build([spec])).bounding_box()
+        # rim fillets widen the cut by up to fillet_radius on each side
+        assert (cut.center().X, cut.center().Y) == pytest.approx((20, 35), abs=1e-3)
+        # turned 90: length along X, width (10 + 2 x 7.5 walls) along Y
+        assert 30 <= cut.size.X <= 30 + 2 * 2.5 + 1e-3
+        assert 25 <= cut.size.Y <= 25 + 2 * 2.5 + 1e-3
+        assert cut.min.Z == pytest.approx(3 * 7 - 4, abs=1e-3)
+
+    def test_past_the_block_edge_raises(self):
+        with pytest.raises(ValueError, match='scoop 1 .* extends past the block'):
+            self.build([{'x': 30, 'y': 0, 'rotation': 45}])
 
 
 class TestLabel:
@@ -246,20 +313,20 @@ class TestLabel:
         return part
 
     def test_embossed_1mm_at_its_coordinates(self):
-        part = self.emboss(Label(label_text='A', mode=LabelMode.SLOT_LABEL)).part
+        part = self.emboss(Label(label_text='A', type=LabelType.SLOT)).part
         assert part.bounding_box().max.Z == pytest.approx(1)
         raised = part - surface()
         assert raised.bounding_box().center().X == pytest.approx(5, abs=0.5)
 
     @pytest.mark.parametrize('label', [
-        Label(label_text='A', mode=LabelMode.NO_LABEL),
-        Label(label_text='', mode=LabelMode.SLOT_LABEL),
+        Label(label_text='A', type=LabelType.NONE),
+        Label(label_text='', type=LabelType.SLOT),
     ])
     def test_no_label_or_empty_text_adds_nothing(self, label):
         assert self.emboss(label).part.volume == pytest.approx(surface_volume())
 
-    def test_alignment_needs_a_label_mode(self):
-        with pytest.raises(ValueError, match='NO_LABEL'):
+    def test_alignment_needs_a_label_type(self):
+        with pytest.raises(ValueError, match='NONE'):
             _ = Label().alignment
 
 
@@ -316,8 +383,8 @@ class TestLayout:
 
 
 class TestBinValidation:
-    def labeled(self, mode=LabelMode.BIN_LABEL) -> Label:
-        return Label(label_text='M3', mode=mode)
+    def labeled(self, label_type=LabelType.BIN) -> Label:
+        return Label(label_text='M3', type=label_type)
 
     def test_partial_gfu_raises(self):
         with pytest.raises(ValueError, match='x must be whole GFU'):

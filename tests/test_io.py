@@ -9,14 +9,16 @@ import logging
 import pytest
 from build123d import Box, BuildPart
 
-from threedpy.constants import (
-    GFU_GRID,
+from threedpy.constants import GFU_GRID
+from threedpy.defaults import (
     SLOT_DEPTH_CLEARANCE,
     SLOT_DIAMETER_CLEARANCE,
-    SLOT_SCOOP_LENGTH,
-    SLOT_SCOOP_WALL_WIDTH,
+    BLOCK_SCOOP_DEPTH_RATIO,
+    BLOCK_SCOOP_FLAT_WIDTH,
+    BLOCK_SCOOP_LENGTH,
+    BLOCK_SCOOP_WALL_WIDTH,
 )
-from threedpy.features import LabelMode, SlotScoopMode
+from threedpy.features import LabelType, BlockScoopType
 from threedpy.io import export_as_stl, load_from_path, load_storage_bin, load_storage_block
 from threedpy.item import CylinderItem, Orientation, Rotation, Shape, SocketExtension
 from threedpy.storage import RoundAxis, StorageBin, StorageBlock, StorageBlockType
@@ -129,7 +131,9 @@ class TestSlotShape:
         assert slot.item.depth == pytest.approx(5 + SLOT_DEPTH_CLEARANCE)
 
     def test_socket_extension_keys_build_its_item(self):
-        slot = {'shape': 'socket_extension', 'total_length': 50.7, 'rotation': 'down'}
+        slot = {
+            'shape': 'socket_extension', 'drive': '1/4', 'total_length': 50.7, 'rotation': 'down'
+        }
         item = first_slot(block(slots=[slot])).item
         assert isinstance(item, SocketExtension)
         assert item.rotation is Rotation.DOWN
@@ -156,22 +160,22 @@ class TestSlotShape:
 class TestLabels:
     def test_slot_label_text(self):
         slot = first_slot(block(slots=[{**SLOT, 'label': 10}]))
-        assert slot.label.mode is LabelMode.SLOT_LABEL
+        assert slot.label.type is LabelType.SLOT
         assert slot.label.label_text == '10'
 
     def test_no_label_text_means_no_label(self):
-        assert first_slot(block()).label.mode is LabelMode.NO_LABEL
+        assert first_slot(block()).label.type is LabelType.NONE
 
     def test_labels_false_turns_them_off(self):
         slot = first_slot(block(slots=[{**SLOT, 'label': 'A', 'labels': False}]))
-        assert slot.label.mode is LabelMode.NO_LABEL
+        assert slot.label.type is LabelType.NONE
 
     def test_row_label_is_shared_by_its_slots(self, caplog):
         rows = [{'row_label': 'R', 'slots': [{**SLOT, 'label': 'A'}, dict(SLOT)]}]
         with caplog.at_level(logging.WARNING):
             b = block(rows=rows)
         row = next(iter(b.rows))
-        assert row.label.mode is LabelMode.ROW_LABEL
+        assert row.label.type is LabelType.ROW
         assert all(slot.label is row.label for slot in row)
         assert 'row_label replaces 1 slot label' in caplog.text
 
@@ -182,8 +186,8 @@ class TestLabels:
         }
         b = load_storage_block(data, no_labels=True)
         row = next(iter(b.rows))
-        assert row.label.mode is LabelMode.NO_LABEL
-        assert all(slot.label.mode is LabelMode.NO_LABEL for slot in row)
+        assert row.label.type is LabelType.NONE
+        assert all(slot.label.type is LabelType.NONE for slot in row)
 
 
 # --- scoops
@@ -191,19 +195,19 @@ class TestLabels:
 
 class TestScoops:
     def test_no_slot_scoop_by_default(self):
-        assert first_slot(block()).scoop.mode is SlotScoopMode.NONE
+        assert first_slot(block()).scoop.type is BlockScoopType.NONE
 
     def test_slot_scoop_true_uses_the_slot_default(self):
         slot = first_slot(block(slots=[{**SLOT, 'slot_scoop': True}]))
-        assert slot.scoop.mode is SlotScoopMode.SLOT_SCOOP
+        assert slot.scoop.type is BlockScoopType.SLOT
         assert slot.scoop.flat_width == pytest.approx(slot.x_footprint)
         assert slot.scoop.depth == pytest.approx(slot.x_footprint / 2)
-        assert slot.scoop.wall_width == SLOT_SCOOP_WALL_WIDTH
-        assert slot.scoop.length == SLOT_SCOOP_LENGTH
+        assert slot.scoop.wall_width == BLOCK_SCOOP_WALL_WIDTH
+        assert slot.scoop.length == BLOCK_SCOOP_LENGTH
 
     def test_slot_scoop_mapping_overrides_dimensions(self):
         slot = first_slot(block(slots=[{**SLOT, 'slot_scoop': {'length': 15}}]))
-        assert slot.scoop.mode is SlotScoopMode.SLOT_SCOOP
+        assert slot.scoop.type is BlockScoopType.SLOT
         assert slot.scoop.length == 15
 
     def test_unknown_scoop_key_raises(self):
@@ -215,14 +219,55 @@ class TestScoops:
         with caplog.at_level(logging.WARNING):
             b = block(rows=rows)
         row = next(iter(b.rows))
-        assert row.scoop.mode is SlotScoopMode.ROW_SCOOP
+        assert row.scoop.type is BlockScoopType.ROW
         assert all(slot.scoop is row.scoop for slot in row)
         assert 'row_scoop replaces 1 slot_scoop' in caplog.text
+
+    def test_row_scoop_over_left_right_slots_raises(self):
+        with pytest.raises(ValueError, match="row_scoop doesn't support left/right"):
+            block(rows=[{'row_scoop': True, 'slots': [{**SLOT, 'rotation': 'right',
+                                                        'orientation': 'horizontal'}]}])
 
     def test_global_row_scoop_applies_to_every_row(self):
         rows = [{'slots': [dict(SLOT)]}, {'slots': [dict(SLOT)]}]
         b = block(rows=rows, **{'global': {'row_scoop': True}})
-        assert all(row.scoop.mode is SlotScoopMode.ROW_SCOOP for row in b.rows)
+        assert all(row.scoop.type is BlockScoopType.ROW for row in b.rows)
+
+
+# --- manual scoops
+
+
+class TestManualScoops:
+    def test_defaults(self):
+        scoop = block(manual_scoops=[{'x': 10, 'y': -5}]).manual_scoops[0]
+        assert scoop.type is BlockScoopType.MANUAL
+        assert (scoop.x, scoop.y, scoop.rotation) == (10, -5, 0)
+        assert scoop.flat_width == BLOCK_SCOOP_FLAT_WIDTH
+        assert scoop.depth == BLOCK_SCOOP_FLAT_WIDTH * BLOCK_SCOOP_DEPTH_RATIO
+        assert (scoop.wall_width, scoop.length) == (BLOCK_SCOOP_WALL_WIDTH, BLOCK_SCOOP_LENGTH)
+
+    def test_given_values(self):
+        spec = {'x': 1, 'y': 2, 'rotation': 90, 'length': 30, 'flat_width': 8, 'depth': 3}
+        scoop = block(manual_scoops=[spec]).manual_scoops[0]
+        assert (scoop.rotation, scoop.length, scoop.flat_width, scoop.depth) == (90, 30, 8, 3)
+
+    def test_depth_defaults_to_half_the_given_flat_width(self):
+        assert block(manual_scoops=[{'flat_width': 12}]).manual_scoops[0].depth == 6
+
+    def test_no_scoops_by_default(self):
+        assert block().manual_scoops == []
+
+    def test_unknown_key_raises(self):
+        with pytest.raises(ValueError, match='scoop 1 scoop: unknown key.*rotate'):
+            block(manual_scoops=[{'x': 0, 'rotate': 90}])
+
+    def test_must_be_a_list_of_mappings(self):
+        with pytest.raises(ValueError, match='manual_scoops must be a list of mappings'):
+            block(manual_scoops={'x': 0})
+
+    def test_slot_scoops_take_no_position(self):
+        with pytest.raises(ValueError, match='scoop: unknown key.*x'):
+            block(slots=[{**SLOT, 'slot_scoop': {'x': 5}}])
 
 
 # --- storage_bin
@@ -235,12 +280,12 @@ class TestStorageBin:
         assert (b.x, b.y, b.z) == (2, 1, 4)
         assert b.label.label_text == 'M3'
         assert b.label.font_size == 8.0
-        assert b.label.mode is LabelMode.BIN_LABEL
+        assert b.label.type is LabelType.BIN
 
     def test_no_labels(self):
         data = {'storage_bin': {'x': 1, 'y': 1, 'z': 4, 'label': 'M3'}}
         b = load_storage_bin(data, no_labels=True)
-        assert b.label.mode is LabelMode.NO_LABEL
+        assert b.label.type is LabelType.NONE
 
     def test_overrides_beat_the_config(self):
         b = load_storage_bin({'storage_bin': {'x': 1, 'y': 1, 'z': 4}}, y=2, z=5)

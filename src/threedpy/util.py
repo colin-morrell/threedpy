@@ -10,6 +10,8 @@ from gridfinity_build123d import (
     GridfinityRefinedMagnetHolePressfit as MagHole,
 )
 
+from threedpy.defaults import BASE_MAGNET_HOLES
+
 logger = logging.getLogger(__name__)
 
 
@@ -123,7 +125,7 @@ def build_gf_base(grid_x: int, grid_y: int):
     base = BaseEqual(
         grid_x,
         grid_y,
-        [MagHole(BottomCorners())]
+        [MagHole(BottomCorners())] if BASE_MAGNET_HOLES else []
     )
     return base
 

@@ -18,7 +18,8 @@ from threedpy.constants import (
     STORAGE_BIN_KEYS,
     STORAGE_BLOCK_KEYS,
 )
-from threedpy.features import Label, LabelMode, Slot, SlotScoop, SlotScoopMode
+from threedpy.defaults import BLOCK_TYPE, FONT_SIZE
+from threedpy.features import Label, LabelType, Slot, BlockScoop, BlockScoopType
 from threedpy.item import ITEM_TYPES, Item, Shape
 from threedpy.storage import (
     BlockRow,
@@ -72,6 +73,25 @@ def _round_axes(spec: Any) -> RoundAxis:
     return flags
 
 
+def _manual_scoops(spec: Any) -> list[BlockScoop]:
+    """The storage_block 'manual_scoops' list as MANUAL BlockScoops: each mapping gives x/y (mm,
+    block-centered), rotation (degrees) and any dimensions; flat_width defaults to
+    BLOCK_SCOOP_FLAT_WIDTH and depth to half the flat width.
+    """
+    if spec is None:
+        return []
+    if not isinstance(spec, list) or not all(isinstance(entry, dict) for entry in spec):
+        raise ValueError('[!] storage_block: manual_scoops must be a list of mappings')
+    scoops = []
+    for i, entry in enumerate(spec, start=1):
+        BlockScoop.check_keys(entry, f'storage_block manual scoop {i}', placement=True)
+        scoop = BlockScoop(type=BlockScoopType.MANUAL)
+        for key, value in entry.items():
+            setattr(scoop, key, value)
+        scoops.append(scoop)
+    return scoops
+
+
 def load_storage_block(
         data: dict[str, Any],
         name: str = '',
@@ -106,19 +126,20 @@ def load_storage_block(
         debug=debug,
         no_labels=no_labels,
         name=name or block_data.get('name', ''),
-        type=StorageBlockType(block_type or block_data.get('type', StorageBlockType.ROWED)),
+        type=StorageBlockType(block_type or block_data.get('type', BLOCK_TYPE)),
         font_size=block_data.get('font_size', StorageBlock.font_size),
         x=float(dims['x'] or 0.0),
         y=float(dims['y'] or 0.0),
         z=float(dims['z'] or 0.0),
-        round_to_gfu=round_to_gfu
+        round_to_gfu=round_to_gfu,
+        manual_scoops=_manual_scoops(block_data.get('manual_scoops'))
     )
     for row in load_rows(data, font_size=block.font_size):
         if no_labels:
             # after loading, so no row/slot 'labels' setting can turn them back on
-            row.label.mode = LabelMode.NO_LABEL
+            row.label.type = LabelType.NONE
             for slot in row:
-                slot.label.mode = LabelMode.NO_LABEL
+                slot.label.type = LabelType.NONE
         block.add_row(row)
     return block
 
@@ -154,7 +175,7 @@ def load_storage_block_from_path(
 def load_storage_bin(
         data: dict[str, Any],
         name: str = '',
-        font_size: float = 6.0,
+        font_size: float = FONT_SIZE,
         x: int | None = None,
         y: int | None = None,
         z: int | None = None,
@@ -179,7 +200,7 @@ def load_storage_bin(
     label = Label(
         font_size=bin_data.get('font_size', font_size),
         label_text=str(bin_data.get('label', '')),
-        mode=LabelMode.NO_LABEL if no_labels else LabelMode.BIN_LABEL
+        type=LabelType.NONE if no_labels else LabelType.BIN
     )
     return StorageBin(
         debug=debug,
@@ -204,7 +225,7 @@ def load_from_path(
     """Build a StorageBin or StorageBlock from YAML config, picked by its top-level keys. Name
     defaults to filename if not set in config.
     """
-    logger.info(f'loading {path}')
+    logger.info(f'[.] load_from_path({path})')
     with open(path) as f:
         data = yaml.safe_load(f) or {}
     part: Storage
@@ -226,34 +247,33 @@ def load_from_path(
     return part
 
 
-def _slot_scoop(slot: Slot, spec: Any, owner: str) -> SlotScoop:
+def _slot_scoop(slot: Slot, spec: Any, owner: str) -> BlockScoop:
     """A slot's scoop from its 'slot_scoop' YAML value: false/missing -> none, true -> the slot's
     default, a mapping -> the default with those dimensions overridden.
     """
     if not spec:
-        return SlotScoop()
-    SlotScoop.check_keys(spec, owner)
+        return BlockScoop()
+    BlockScoop.check_keys(spec, owner)
     scoop = slot.default_scoop()
     for key, value in (spec if isinstance(spec, dict) else {}).items():
         setattr(scoop, key, value)
     return scoop
 
 
-def _row_scoop(row: BlockRow, spec: Any) -> SlotScoop:
+def _row_scoop(row: BlockRow, spec: Any) -> BlockScoop:
     """A row's scoop from its 'row_scoop' YAML value: false/missing -> none, true -> defaults, a
     mapping -> those dimensions overridden.
 
-    depth/length come from the row's slots now so validation can run before the build;
-    flat_width/wall_width need the slot layout and are filled in at build time (BlockRow.build_scoop.)
+    Dimensions left unset are filled from BlockRow.default_scoop at build time, once the slot
+    layout is known.
     """
     if not spec:
-        return SlotScoop()
-    SlotScoop.check_keys(spec, f"row '{row.name}'")
-    scoop = SlotScoop(
-        depth=max((slot.x_footprint / 2 for slot in row.slots), default=0.0),
-        length=row.y_max_slot / 2,
-        mode=SlotScoopMode.ROW_SCOOP
-    )
+        return BlockScoop()
+    BlockScoop.check_keys(spec, f"row '{row.name}'")
+    # TODO --> turn row scoops 90 degrees for left/right slots
+    if any(slot.scoop_rotation for slot in row.slots):
+        raise ValueError(f"[!] row '{row.name}': row_scoop doesn't support left/right slots yet")
+    scoop = BlockScoop(type=BlockScoopType.ROW)
     for key, value in (spec if isinstance(spec, dict) else {}).items():
         setattr(scoop, key, value)
     return scoop
@@ -273,7 +293,7 @@ def _slot_item(shape: Shape, config: dict[str, Any], owner: str) -> Item:
 
 def _slot_from_config(config: dict[str, Any]) -> Slot:
     """Build a Slot from its merged config, turning label text (e.g. '6' or 6) into a Label,
-    'slot_scoop' into a SlotScoop and an item shape's keys into its Item.
+    'slot_scoop' into a BlockScoop and an item shape's keys into its Item.
     """
     config = dict(config)
     scoop_spec = config.pop('slot_scoop', False)
@@ -293,13 +313,13 @@ def _slot_from_config(config: dict[str, Any]) -> Slot:
         raise ValueError('[!] {}: unknown key(s): {}'.format(owner, ', '.join(sorted(unknown))))
     if shape in ITEM_TYPES:
         config['item'] = _slot_item(shape, config, owner)
-    # labels: false (global/row/slot) turns labels off; otherwise label text gives a SLOT_LABEL
+    # labels: false (global/row/slot) turns labels off; otherwise label text gives a SLOT label
     show_labels = config.pop('labels', None) is not False
     label = config.get('label')
     if not isinstance(label, Label):
         text = '' if label is None else str(label)
-        mode = LabelMode.SLOT_LABEL if text and show_labels else LabelMode.NO_LABEL
-        config['label'] = Label(label_text=text, font_size=config['font_size'], mode=mode)
+        label_type = LabelType.SLOT if text and show_labels else LabelType.NONE
+        config['label'] = Label(label_text=text, font_size=config['font_size'], type=label_type)
     # other item shapes' keys, e.g. a global 'orientation' on a prism_rect slot
     for key in set(config) - slot_keys:
         config.pop(key)
@@ -308,7 +328,7 @@ def _slot_from_config(config: dict[str, Any]) -> Slot:
     return slot
 
 
-def load_rows(data: dict[str, Any], font_size: float = 6.0) -> list[BlockRow]:
+def load_rows(data: dict[str, Any], font_size: float = FONT_SIZE) -> list[BlockRow]:
     """Build Rows from a parsed YAML config.
 
     --> Slots are grouped under 'rows', each with its own 'slots' list and an
@@ -316,7 +336,7 @@ def load_rows(data: dict[str, Any], font_size: float = 6.0) -> list[BlockRow]:
     --> 'storage_block' 'global' keys (e.g. shape, slot_scoop) are defaults for every slot
     --> Other row-level keys are defaults for that row's slots
     --> Values set on an individual slot override both.
-    --> 'slot_scoop' (global/row/slot): true, a mapping of SlotScoop dimensions, or false to opt out.
+    --> 'slot_scoop' (global/row/slot): true, a mapping of BlockScoop dimensions, or false to opt out.
     --> 'row_scoop' (global/row): true or a mapping; one scoop across the row, shared by all its
         slots in place of their own scoops.
     --> 'shape' (global/row/slot): required; an item shape (e.g. cylinder, socket_extension) is
@@ -353,7 +373,7 @@ def load_rows(data: dict[str, Any], font_size: float = 6.0) -> list[BlockRow]:
         row_label = row_data.get('row_label')
         if row_label is not None and row_defaults.get('labels', defaults.get('labels')) is not False:
             row.label = Label(
-                label_text=str(row_label), font_size=row.font_size, mode=LabelMode.ROW_LABEL
+                label_text=str(row_label), font_size=row.font_size, type=LabelType.ROW
             )
         if row.has_row_label:
             replaced = [slot for slot in slots if slot.draws_label]
@@ -367,7 +387,7 @@ def load_rows(data: dict[str, Any], font_size: float = 6.0) -> list[BlockRow]:
             explicit = [slot for slot, raw in zip(slots, row_data['slots']) if raw.get('slot_scoop')]
             if explicit:
                 logger.warning(f"row '{row.name}': row_scoop replaces {len(explicit)} slot_scoop(s)")
-            # share one SlotScoop so build-time filling reaches every slot
+            # share one BlockScoop so build-time filling reaches every slot
             for slot in slots:
                 slot.scoop = row.scoop
         rows.append(row)

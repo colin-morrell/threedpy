@@ -113,7 +113,8 @@ values on a slot override both. A top-level `slots` list can be used instead of 
 single row. Quote labels that look like numbers (`'10'`), or YAML reads them as numbers.
 
 Every slot needs a `shape`, set at any of those levels. `cylinder` takes `diameter` and `depth`;
-`socket_extension` takes `total_length`; `prism_rect` takes `width`, `length` and `depth`.
+`socket_extension` takes `drive` (`1/4` or `3/8`) and `total_length`; `prism_rect` takes `width`,
+`length` and `depth`.
 `cylinder` and `socket_extension` also take an `orientation`, `vertical` (the default; standing
 up) or `horizontal` (laid on its side, top towards +Y), and a `rotation` that then turns it as seen
 from above: `up` (the default; no turn), `down`, `left` or `right`. A horizontal item's top points
@@ -123,10 +124,25 @@ that way; a vertical item's +Y side does. E.g. socket extensions laid along Y, o
 storage_block:
     global:
         shape: 'socket_extension'
+        drive: '1/4'
         orientation: 'horizontal'
 slots:
     - {total_length: 50.7, label: '2"'}
     - {total_length: 76.2, rotation: 'down', label: '3"'}
 ```
 
-`cylinder` and `socket_extension` slots get the same clearance, set in `constants.py`.
+`cylinder` and `socket_extension` slots get the same clearance, set in `defaults.py`.
+
+`slot_scoop` (global, row or slot) cuts a finger scoop over each slot: `true` for the slot's
+default, a mapping to override `flat_width`, `wall_width`, `depth`, `length` or `fillet_radius`, or
+`false` to opt a slot out. Scoops turn with their slot's `rotation`. `row_scoop` (global or row)
+cuts one scoop across a whole row instead; rows of `left`/`right` slots can't have one yet.
+`storage_block.manual_scoops` places scoops anywhere on the block, independent of the slots:
+`x`/`y` in mm from the block's center, `rotation` in degrees (0 runs the scoop along Y), and any of
+the same dimensions (`flat_width` defaults to 10mm, `depth` to half of it):
+
+```yaml
+storage_block:
+    manual_scoops:
+        - {x: 20, y: 40, rotation: 90, length: 30}
+```

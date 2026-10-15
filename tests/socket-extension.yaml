@@ -7,6 +7,7 @@ storage_block:
     z: 3
     global:
         shape: 'socket_extension'
+        drive: '1/4'
         orientation: 'horizontal'
         # square drive end towards +X
         rotation: 'right'

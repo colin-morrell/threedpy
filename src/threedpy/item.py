@@ -23,7 +23,14 @@ from build123d import (
     fillet,
 )
 
-from threedpy.constants import SLOT_DEPTH_CLEARANCE, SLOT_DIAMETER_CLEARANCE
+from threedpy.defaults import (
+    ITEM_ORIENTATION,
+    ITEM_ROTATION,
+    SLOT_DEPTH_CLEARANCE,
+    SLOT_DIAMETER_CLEARANCE,
+    BLOCK_SCOOP_FILLET_RADIUS,
+    SOCKET_EXTENSION_SCOOP_FILLET_RADIUS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +48,50 @@ class Shape(Enum):
     PRISM_HEXA = 'prism_hexa'
     PRISM_RECT = 'prism_rect'
     SOCKET_EXTENSION = 'socket_extension'
+
+
+class Drive(Enum):
+    """Socket wrench drive size, which sets a SocketExtension's dimensions.
+
+    Measurements based on Husky extensions.
+    """
+
+    NONE = None
+    QUARTER_INCH = '1/4'
+    THREE_EIGHTHS = '3/8'
+
+    @property
+    def dimensions(self) -> dict[str, float]:
+        """SocketExtension dimensions (mm, before clearance) for this drive size; 0 = unmeasured."""
+        match self:
+            case Drive.QUARTER_INCH:
+                return {
+                    'bot_rad': 12.3 / 2,
+                    'bot_len': 13.5,
+                    'bot_fillet_rad': 1.0,
+                    'cone': 4.0,
+                    'cone_fillet_rad': 2.0,
+                    'mid_rad': 8.15 / 2,
+                    'mid_top_fillet_rad': 0.5,
+                    'top_width': 6.7,
+                    'top_len': 8.8,
+                    'top_top_fillet_rad': 0.5,
+                }
+            case Drive.THREE_EIGHTHS:
+                return {
+                    'bot_rad': 16.9 / 2,
+                    'bot_len': 17.5,
+                    'bot_fillet_rad': 1.0,
+                    'cone': 4.0,
+                    'cone_fillet_rad': 2.0,
+                    'mid_rad': 12.10 / 2,
+                    'mid_top_fillet_rad': 0.5,
+                    'top_width': 10.15,
+                    'top_len': 13.5,
+                    'top_top_fillet_rad': 0.5,
+                }
+            case _:
+                raise ValueError('Drive.NONE has no dimensions')
 
 
 class Rotation(Enum):
@@ -90,6 +141,11 @@ class Orientation(Enum):
         return Rot(X=-90) if self is Orientation.HORIZONTAL else Rot()
 
 
+# enum members for the configured defaults, so dataclass fields don't call the enums
+DEFAULT_ORIENTATION = Orientation(ITEM_ORIENTATION)
+DEFAULT_ROTATION = Rotation(ITEM_ROTATION)
+
+
 @dataclass
 class Item(ABC):
     """Item
@@ -111,12 +167,11 @@ class Item(ABC):
 
     # TODO --> import stl??
 
-    # whether a scoop's rim can be filleted where it crosses the item's slot
-    # off by default: OCCT can segfault filleting across curved surfaces (revisit)
-    fillet_scoop_rim: ClassVar[bool] = False
+    # rim fillet radius for scoops over this item's slot
+    scoop_fillet_radius: ClassVar[float] = BLOCK_SCOOP_FILLET_RADIUS
 
-    orientation: Orientation = Orientation.VERTICAL
-    rotation: Rotation = Rotation.UP
+    orientation: Orientation = DEFAULT_ORIENTATION
+    rotation: Rotation = DEFAULT_ROTATION
     diameter_clearance: float = SLOT_DIAMETER_CLEARANCE
     depth_clearance: float = SLOT_DEPTH_CLEARANCE
 
@@ -162,8 +217,6 @@ class CylinderItem(Item):
         depth (float): length along its axis; required.
     """
 
-    fillet_scoop_rim: ClassVar[bool] = True
-
     diameter: float = 0.0
     depth: float = 0.0
 
@@ -192,31 +245,46 @@ class SocketExtension(Item):
     in a square drive (top). Lengths are along the extension, from the round end.
 
     Args:
+        drive (Drive): drive size; required. Sets every dimension left at 0.
         total_length (float): overall length; required.
     """
 
-    bot_rad: float = 12.3 / 2
-    bot_len: float = 13.5
-    bot_fillet_rad: float = 1.0
-    cone: float = 4.0
-    cone_fillet_rad: float = 2.0
-    mid_rad: float = 8.15 / 2
-    mid_top_fillet_rad: float = 0.5
-    #top_width: float = 6.25
-    top_width: float = 6.7
-    top_width_with_ball: float = 6.7
-    top_len: float = 8.8
-    top_top_fillet_rad: float = 0.5
+    scoop_fillet_radius: ClassVar[float] = SOCKET_EXTENSION_SCOOP_FILLET_RADIUS
+
+    drive: Drive = Drive.NONE
+    bot_rad: float = 0.0
+    bot_len: float = 0.0
+    bot_fillet_rad: float = 0.0
+    cone: float = 0.0
+    cone_fillet_rad: float = 0.0
+    mid_rad: float = 0.0
+    mid_top_fillet_rad: float = 0.0
+    top_width: float = 0.0
+    top_len: float = 0.0
+    top_top_fillet_rad: float = 0.0
     total_length: float = 0.0
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        if not isinstance(self.drive, Drive):
+            self.drive = Drive(self.drive)
+        if self.drive is Drive.NONE:
+            known = ', '.join(d.value for d in Drive if d is not Drive.NONE)
+            raise ValueError(f'[!] SocketExtension: drive not specified ({known})')
+        for name, value in self.drive.dimensions.items():
+            if getattr(self, name) == 0:
+                setattr(self, name, value)
+        unmeasured = [name for name in self.drive.dimensions if getattr(self, name) == 0]
+        if unmeasured:
+            raise ValueError(
+                f'[!] SocketExtension: {self.drive.value} drive has unmeasured dimension(s): '
+                + ', '.join(unmeasured)
+            )
         if self.total_length == 0.0:
             raise ValueError('[!] SocketExtension: total_length not specified')
         self.bot_rad += self.diameter_clearance / 2
         self.mid_rad += self.diameter_clearance / 2
         self.top_width += self.diameter_clearance
-        self.top_width_with_ball += self.diameter_clearance
         self.total_length += self.depth_clearance
 
     @property

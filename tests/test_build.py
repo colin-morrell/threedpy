@@ -5,10 +5,12 @@ Volumes and solid counts are compared against tests/snapshots/arrange.json; afte
 geometry change, rerun with --update-snapshots and review the JSON diff.
 """
 
+import logging
 from pathlib import Path
 
 import pytest
 
+from threedpy.defaults import SOCKET_EXTENSION_SCOOP_FILLET_RADIUS
 from threedpy.io import load_from_path, load_storage_block
 
 TESTS_DIR = Path(__file__).parent
@@ -17,15 +19,30 @@ CONFIGS = sorted(TESTS_DIR.glob('*.yaml'))
 VOLUME_TOLERANCE = 1e-5
 
 
+class _Recorder(logging.Handler):
+    def __init__(self):
+        super().__init__(logging.WARNING)
+        self.messages = []
+
+    def emit(self, record):
+        self.messages.append(record.getMessage())
+
+
 @pytest.fixture(scope='module')
 def built():
-    """Build each config once, however many tests check it: path -> (block, part)."""
+    """Build each config once, however many tests check it: path -> (block, part, warnings)."""
     cache = {}
 
     def build(path):
         if path not in cache:
-            block = load_from_path(path)
-            cache[path] = (block, block.build(arrange=True).part)
+            recorder = _Recorder()
+            logger = logging.getLogger('threedpy')
+            logger.addHandler(recorder)
+            try:
+                block = load_from_path(path)
+                cache[path] = (block, block.build(arrange=True).part, recorder.messages)
+            finally:
+                logger.removeHandler(recorder)
         return cache[path]
 
     return build
@@ -34,18 +51,18 @@ def built():
 @pytest.mark.parametrize('path', CONFIGS, ids=lambda path: path.stem)
 class TestArrangeBuild:
     def test_one_valid_solid(self, path, built):
-        _, part = built(path)
+        _, part, _ = built(path)
         assert part.is_valid
         assert len(part.solids()) == 1
 
     def test_top_is_the_surface_plus_labels(self, path, built):
-        block, part = built(path)
+        block, part, _ = built(path)
         has_labels = any(row.has_labels for row in block.rows)
         expected = block.z_mm + (1 if has_labels and not block.no_labels else 0)
         assert part.bounding_box().max.Z == pytest.approx(expected, abs=1e-4)
 
     def test_matches_snapshot(self, path, built, snapshots):
-        _, part = built(path)
+        _, part, _ = built(path)
         data, update = snapshots
         actual = {'volume': round(part.volume, 3), 'solids': len(part.solids())}
         if update:
@@ -69,3 +86,12 @@ def test_positional_block_builds():
     part = load_storage_block(data).build(arrange=True).part
     assert part.is_valid
     assert len(part.solids()) == 1
+
+
+def test_socket_extension_scoop_rims_round_at_their_own_radius(built):
+    # scoops over socket extensions start at SOCKET_EXTENSION_SCOOP_FILLET_RADIUS, so no slow
+    # failed attempt at the default radius comes first
+    block, _, warnings = built(TESTS_DIR / 'socket-extension-scoops.yaml')
+    radii = {slot.scoop.fillet_radius for row in block.rows for slot in row}
+    assert radii == {SOCKET_EXTENSION_SCOOP_FILLET_RADIUS}
+    assert not any('scoop rim fillet' in message for message in warnings)

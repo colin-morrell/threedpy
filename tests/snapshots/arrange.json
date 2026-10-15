@@ -1,4 +1,8 @@
 {
+    "manual-scoops.yaml": {
+        "solids": 1,
+        "volume": 210849.455
+    },
     "round-horz-label-even-rows.yaml": {
         "solids": 1,
         "volume": 470845.846
@@ -49,7 +53,15 @@
     },
     "scoops.yaml": {
         "solids": 1,
-        "volume": 292347.146
+        "volume": 292510.885
+    },
+    "socket-extension-rotated-scoops.yaml": {
+        "solids": 1,
+        "volume": 139265.171
+    },
+    "socket-extension-scoops.yaml": {
+        "solids": 1,
+        "volume": 206352.687
     },
     "socket-extension.yaml": {
         "solids": 1,

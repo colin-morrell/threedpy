@@ -1,0 +1,18 @@
+# manual scoop test: a row of slots plus block-level scoops above and below it, straight, at 90 and at 45
+storage_block:
+    type: 'rowed'
+    font_size: 6.0
+    x: 2
+    y: 3
+    z: 3
+    global:
+        shape: 'cylinder'
+        depth: 5.0
+    manual_scoops:
+        - {x: -20, y: 40}
+        - {x: 20, y: 40, rotation: 90, length: 30}
+        - {x: 0, y: -40, rotation: 45, flat_width: 8}
+slots:
+    - {diameter: 11.85, label: '5'}
+    - {diameter: 12.95, label: '7'}
+    - {diameter: 14.15, label: '9'}

@@ -1,0 +1,18 @@
+# rotated scoop test: extensions laid along X (rotation right), each with a slot scoop running along it
+# no labels: rows don't leave room in Y for a rotated scoop's width yet, so it would cut under them
+storage_block:
+    type: 'rowed'
+    font_size: 6.0
+    x: 4
+    y: 1
+    z: 3
+    global:
+        shape: 'socket_extension'
+        drive: '1/4'
+        orientation: 'horizontal'
+        rotation: 'right'
+        slot_scoop: true
+rows:
+    - slots:
+        - {total_length: 50.7}
+        - {total_length: 102.15}

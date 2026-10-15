@@ -22,14 +22,27 @@ from gridfinity_build123d import (
 from gridfinity_build123d import Label as BinLabel
 
 from threedpy.constants import (
+    GF_BIN_FLOOR_Z,
+    GF_TOP_BELOW_Z_MM,
     GFU_GRID,
     GFU_HEIGHT,
     LABEL_TAB_WIDTH,
-    SCOOP_RADIUS,
-    SLOT_SCOOP_FILLET_RADIUS,
-    SLOT_SCOOP_WALL_WIDTH,
 )
-from threedpy.features import Label, LabelMode, Slot, SlotScoop, SlotScoopMode
+from threedpy.defaults import (
+    BIN_LABEL_MIN_Z,
+    BIN_SCOOP_RADIUS_MARGIN,
+    BLOCK_TYPE,
+    FONT_SIZE,
+    LABEL_SPACING,
+    MIN_SLOT_SPACING,
+    ROW_MARKER_SIZE,
+    ROW_SCOOP_EDGE_MARGIN,
+    ROW_SCOOP_LENGTH_RATIO,
+    BIN_SCOOP_RADIUS,
+    BLOCK_SCOOP_DEPTH_RATIO,
+    BLOCK_SCOOP_WALL_WIDTH,
+)
+from threedpy.features import Label, LabelType, Slot, BlockScoop, BlockScoopType
 from threedpy.util import DoublyLinkedList, build_gf_base, build_gf_box
 
 logger = logging.getLogger(__name__)
@@ -46,6 +59,10 @@ class StorageBlockType(Enum):
 
     POSITIONAL = 'positional'
     ROWED = 'rowed'
+
+
+# enum member for the configured default, so the dataclass field doesn't call the enum
+DEFAULT_BLOCK_TYPE = StorageBlockType(BLOCK_TYPE)
 
 
 class RoundAxis(Flag):
@@ -69,10 +86,10 @@ class BlockRow:
     """
 
     debug: bool = False
-    font_size: float = 6.0
+    font_size: float = FONT_SIZE
     label: Label = field(default_factory=Label)
     name: str = ''
-    scoop: SlotScoop = field(default_factory=SlotScoop)
+    scoop: BlockScoop = field(default_factory=BlockScoop)
     slots: DoublyLinkedList[Slot] = field(default_factory=DoublyLinkedList)
     width: float = 0.0
     _y: float = 0.0
@@ -81,7 +98,7 @@ class BlockRow:
     def font_spacing(self) -> float:
         """Distance between bottom of slot and top of label."""
         #return self.font_size / 3
-        return 1.0
+        return LABEL_SPACING
 
     @property
     def has_labels(self) -> bool:
@@ -91,17 +108,17 @@ class BlockRow:
     @property
     def has_row_label(self) -> bool:
         """Whether the row has one label for all its slots."""
-        return self.label.mode is LabelMode.ROW_LABEL and not self.label.is_empty
-
-    @property
-    def has_slot_scoops(self) -> bool:
-        """Whether any slot in the row has its own scoop."""
-        return any(slot.scoop.mode is SlotScoopMode.SLOT_SCOOP for slot in self.slots)
+        return self.label.type is LabelType.ROW and not self.label.is_empty
 
     @property
     def has_row_scoop(self) -> bool:
         """Whether the row has one scoop across all its slots."""
-        return self.scoop.mode is SlotScoopMode.ROW_SCOOP
+        return self.scoop.type is BlockScoopType.ROW
+
+    @property
+    def has_slot_scoops(self) -> bool:
+        """Whether any slot in the row has its own scoop."""
+        return any(slot.scoop.type is BlockScoopType.SLOT for slot in self.slots)
 
     @property
     def height(self) -> float:
@@ -124,14 +141,14 @@ class BlockRow:
     @property
     def x_scoop(self) -> float:
         """X-position (center) of the row's slots, for a full-row scoop."""
-        left = min(slot.x - slot.x_footprint / 2 for slot in self.slots)
+        left = min(slot.x - slot.scoop_width / 2 for slot in self.slots)
         return left + self.x_scoop_span / 2
 
     @property
     def x_scoop_span(self) -> float:
         """X distance from the first slot's left edge to the last slot's right edge."""
-        left = min(slot.x - slot.x_footprint / 2 for slot in self.slots)
-        right = max(slot.x + slot.x_footprint / 2 for slot in self.slots)
+        left = min(slot.x - slot.scoop_width / 2 for slot in self.slots)
+        right = max(slot.x + slot.scoop_width / 2 for slot in self.slots)
         return right - left
 
     @property
@@ -202,11 +219,11 @@ class BlockRow:
         return slot
 
     def build_row_marker(self, width: float) -> None:
-        """Draw 1x1 (YxZ) box at the surface along the entire X-width of the row's Y position."""
+        """Draw ROW_MARKER_SIZE (YxZ) box at the surface along the X-width of the row's Y position."""
         Box(
             width,
-            1,
-            1,
+            ROW_MARKER_SIZE,
+            ROW_MARKER_SIZE,
             align=(Align.CENTER, Align.CENTER, Align.MIN),
             mode=Mode.ADD
         )
@@ -222,29 +239,28 @@ class BlockRow:
             return
         self.scoop.fill_unset(self.default_scoop(x_block_width))
         self.scoop.log_build(coords)
-        round_rim = all(slot.fillets_scoop_rim for slot in self.slots)
-        if not round_rim:
-            logger.warning(f"row '{self.name}' scoop spans item slots that can't be filleted; "
-                           'not filleting its rim')
         with Locations(coords):
-            self.scoop.build(Mode.ADD if self.debug else Mode.SUBTRACT, round_rim=round_rim)
+            self.scoop.build(Mode.ADD if self.debug else Mode.SUBTRACT)
 
-    def default_scoop(self, x_block_width: float) -> SlotScoop:
-        """Single-row scoop across its slots' X-footprint, depth of its largest slot radius."""
+    def default_scoop(self, x_block_width: float) -> BlockScoop:
+        """Single-row scoop across its slots' scoop widths, as deep as half the widest one, with
+        the smallest rim fillet any of its slots allows."""
 
-        radius = max((slot.x_footprint / 2 for slot in self.slots), default=0.0)
-        # extend the scoop walls all the way to the edges (w/ .5 margin) on X-axis
-        edge_margin = SLOT_SCOOP_FILLET_RADIUS + 0.5
+        radius = max((slot.scoop_width * BLOCK_SCOOP_DEPTH_RATIO for slot in self.slots), default=0.0)
+        fillet_radius = min((slot.scoop_fillet_radius for slot in self.slots), default=0.0)
+        # extend the scoop walls towards the block's X edges, keeping the rim fillet off them
+        edge_margin = fillet_radius + ROW_SCOOP_EDGE_MARGIN
         max_wall_width = (x_block_width - self.x_scoop_span) / 2 - edge_margin
         # only take default width if it doesn't touch/exceed the edges
-        scoop_wall_width = min(max_wall_width, SLOT_SCOOP_WALL_WIDTH)
+        scoop_wall_width = min(max_wall_width, BLOCK_SCOOP_WALL_WIDTH)
 
-        return SlotScoop(
+        return BlockScoop(
             flat_width=self.x_scoop_span,
             wall_width=scoop_wall_width,
             depth=radius,
-            length=self.y_max_slot/2,
-            mode=SlotScoopMode.ROW_SCOOP
+            length=self.y_min_slot * ROW_SCOOP_LENGTH_RATIO,
+            fillet_radius=fillet_radius,
+            type=BlockScoopType.ROW
         )
 
     def __iter__(self) -> Iterator[Slot]:
@@ -272,7 +288,7 @@ class Storage(ABC):
 
     debug: bool = False
     name: str = ''
-    font_size: float = 6.0
+    font_size: float = FONT_SIZE
     x: float = 0.0
     y: float = 0.0
     z: float = 0.0
@@ -335,7 +351,7 @@ class StorageBin(Storage):
     # TODO --> support labeltab/nolabeltab
 
     label: BinLabel = field(default_factory=BinLabel)
-    scoop_radius: float = SCOOP_RADIUS
+    scoop_radius: float = BIN_SCOOP_RADIUS
 
     def _build(self, arrange: bool = False) -> BuildPart:  # noqa: ARG002
         """Iterate through all slots of all rows and build their specified shapes and features.
@@ -390,13 +406,13 @@ class StorageBin(Storage):
             )
 
     def validate_label_z(self) -> None:
-        if self.label.mode is not LabelMode.NO_LABEL and self.z < 3:
+        if self.label.type is not LabelType.NONE and self.z < BIN_LABEL_MIN_Z:
             raise ValueError(f'[!] storage_bin {self.name}: label tab requires Z > 2')
 
     def validate_scoop_radius(self) -> None:
-        z_top: float = 7 * self.z - 2.5
-        depth: float = z_top - 5.3
-        max_rad: float = depth - 0.1
+        z_top: float = GFU_HEIGHT * self.z - GF_TOP_BELOW_Z_MM
+        depth: float = z_top - GF_BIN_FLOOR_Z
+        max_rad: float = depth - BIN_SCOOP_RADIUS_MARGIN
 
         if self.scoop_radius > max_rad:
             logger.warning(
@@ -437,13 +453,17 @@ class StorageBlock(Storage):
     # TODO --> auto allocate slots/rows given GFU
 
     no_labels: bool = False
-    type: StorageBlockType = StorageBlockType.ROWED
+    type: StorageBlockType = DEFAULT_BLOCK_TYPE
     rows: DoublyLinkedList[BlockRow] = field(default_factory=DoublyLinkedList)
+    # MANUAL scoops placed by x/y/rotation on the block, independent of any slot
+    manual_scoops: list[BlockScoop] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         super().__post_init__()
         if not isinstance(self.type, StorageBlockType):
             self.type = StorageBlockType(self.type)
+        for scoop in self.manual_scoops:
+            scoop.fill_manual_defaults()
 
     @property
     def num_rows(self) -> int:
@@ -547,6 +567,10 @@ class StorageBlock(Storage):
                     row.build_label(top_face)
                 self.build_row_scoop(row, surface_z)
 
+            # after the slots, like slot scoops, so their rims round the slot edges they cross
+            for scoop in self.manual_scoops:
+                self.build_manual_scoop(scoop, surface_z)
+
             return part
 
     def _build_base(self, arrange: bool = False):
@@ -588,11 +612,18 @@ class StorageBlock(Storage):
                 row.build_row_marker(self.x_mm)
 
     def build_row_scoop(self, row: BlockRow, surface_z: float) -> None:
-        """Generate the SlotScoop across an entire BlockRow, if it has one."""
+        """Generate the BlockScoop across an entire BlockRow, if it has one."""
         row.build_scoop((row.x_scoop, row.y_scoop, surface_z), self.x_mm)
 
+    def build_manual_scoop(self, scoop: BlockScoop, surface_z: float) -> None:
+        """Generate one of the block's MANUAL scoops at its own x/y/rotation."""
+        coords = (scoop.x, scoop.y, surface_z)
+        scoop.log_build(coords)
+        with Locations(coords):
+            scoop.build(Mode.ADD if self.debug else Mode.SUBTRACT, rotation=scoop.rotation)
+
     def build_slot_scoop(self, row: BlockRow, slot: Slot, surface_z: float) -> None:
-        """Generate a single slot's own SlotScoop, if it has one."""
+        """Generate a single slot's own BlockScoop, if it has one."""
         slot.build_scoop((slot.x, row.y_scoop, surface_z))
 
     def log_build(self) -> None:
@@ -619,20 +650,35 @@ class StorageBlock(Storage):
         self.validate_x_bounds()
         self.validate_x_spacing()
         self.validate_y_bounds()
+        self.validate_scoop_bounds()
+
+    def validate_scoop_bounds(self) -> None:
+        """Check every MANUAL scoop's rim stays on the block, after its rotation."""
+        for i, scoop in enumerate(self.manual_scoops, start=1):
+            angle = math.radians(scoop.rotation)
+            half_w, half_l = scoop.width / 2, scoop.length / 2
+            # half extents of the turned rim rectangle along X/Y
+            reach_x = abs(half_w * math.cos(angle)) + abs(half_l * math.sin(angle))
+            reach_y = abs(half_w * math.sin(angle)) + abs(half_l * math.cos(angle))
+            if abs(scoop.x) + reach_x > self.x_mm / 2 or abs(scoop.y) + reach_y > self.y_mm / 2:
+                raise ValueError(
+                    f'[!] storage_block manual scoop {i} at x={scoop.x}, y={scoop.y} extends past the '
+                    f'block ({self.x_mm} x {self.y_mm}mm)'
+                )
 
     def validate_x_bounds(self) -> None:
         """Validate all BlockRow's slots do not exceed the StorageBlock's width on the X-axis."""
         # TODO --> automatically account for scoop/no scoop
         # TODO --> assume a reasonable margin so slots don't overlap
         if self.x_max_footprint > self.x_mm:
-            e = f'Y-BOUNDS: footprint {self.x_max_footprint} exceeds block width {self.x_mm}'
+            e = f'X-BOUNDS: footprint {self.x_max_footprint} exceeds block width {self.x_mm}'
             raise ValueError(e)
         l = f'[+] SurfaceBlock X validation passed: {self.x_max_footprint} < {self.x_mm}'
         logger.debug(l)
 
     def validate_x_spacing(self) -> None:
         for row in self.rows:
-            if row.x_slot_spacing < 10.0:
+            if row.x_slot_spacing < MIN_SLOT_SPACING:
                 l = f'[!] WARNING: row.x_slot_spacing {round(row.x_slot_spacing, 2)} < 10mm'
                 logger.warning(l)
 
@@ -647,7 +693,7 @@ class StorageBlock(Storage):
 
     def x_align_slots(self) -> None:
         """X-align slots from L/-X to R/+X with even spacing (per row) between slots + L/R edges."""
-        logger.info('[.] x_align_slots()')
+        logger.info(f'[.] {type(self).__name__}.x_align_slots()')
         for row in self.rows:
             cursor = -self.x_mm / 2
             row.width = self.x_mm
@@ -659,7 +705,7 @@ class StorageBlock(Storage):
 
     def y_align_rows(self) -> None:
         """Y-align rows from top/+Y to bottom/-Y with even spacing between rows + top/bottom edges."""
-        logger.info('[.] y_align_rows()')
+        logger.info(f'[.] {type(self).__name__}.y_align_rows()')
         cursor = self.y_mm / 2
         for row in self.rows:
             cursor -= self.y_row_spacing
