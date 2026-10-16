@@ -11,14 +11,14 @@ from build123d import Box, BuildPart
 
 from threedpy.constants import GFU_GRID
 from threedpy.defaults import (
-    SLOT_DEPTH_CLEARANCE,
-    SLOT_DIAMETER_CLEARANCE,
     BLOCK_SCOOP_DEPTH_RATIO,
     BLOCK_SCOOP_FLAT_WIDTH,
     BLOCK_SCOOP_LENGTH,
     BLOCK_SCOOP_WALL_WIDTH,
+    SLOT_DEPTH_CLEARANCE,
+    SLOT_DIAMETER_CLEARANCE,
 )
-from threedpy.features import LabelType, BlockScoopType
+from threedpy.features import BlockScoopType, LabelType
 from threedpy.io import export_as_stl, load_from_path, load_storage_bin, load_storage_block
 from threedpy.item import CylinderItem, Orientation, Rotation, Shape, SocketExtension
 from threedpy.storage import RoundAxis, StorageBin, StorageBlock, StorageBlockType
@@ -209,6 +209,40 @@ class TestScoops:
         slot = first_slot(block(slots=[{**SLOT, 'slot_scoop': {'length': 15}}]))
         assert slot.scoop.type is BlockScoopType.SLOT
         assert slot.scoop.length == 15
+
+    def test_max_depth_flag_loads(self):
+        slot = first_slot(block(slots=[{**SLOT, 'slot_scoop': {'max_depth': True}}]))
+        assert slot.scoop.max_depth is True
+        rows = [{'row_scoop': {'max_depth': True}, 'slots': [dict(SLOT)]}]
+        row = next(iter(block(rows=rows).rows))
+        assert row.scoop.max_depth is True
+        assert block(manual_scoops=[{'max_depth': True}]).manual_scoops[0].max_depth is True
+
+    @pytest.mark.parametrize('spec', [
+        {'slots': [{**SLOT, 'slot_scoop': {'depth': 4, 'max_depth': True}}]},
+        {'rows': [{'row_scoop': {'depth': 4, 'max_depth': True}, 'slots': [dict(SLOT)]}]},
+        {'manual_scoops': [{'depth': 4, 'max_depth': True}]},
+    ], ids=['slot', 'row', 'manual'])
+    def test_depth_and_max_depth_together_raise(self, spec):
+        with pytest.raises(ValueError, match='give depth or max_depth, not both'):
+            block(**spec)
+
+    def test_max_width_flag_loads_for_row_and_manual_scoops(self):
+        rows = [{'row_scoop': {'max_width': True}, 'slots': [dict(SLOT)]}]
+        assert next(iter(block(rows=rows).rows)).scoop.max_width is True
+        assert block(manual_scoops=[{'max_width': True}]).manual_scoops[0].max_width is True
+
+    def test_max_width_on_a_slot_scoop_raises(self):
+        with pytest.raises(ValueError, match="max_width isn't supported for slot scoops"):
+            block(slots=[{**SLOT, 'slot_scoop': {'max_width': True}}])
+
+    @pytest.mark.parametrize('spec', [
+        {'rows': [{'row_scoop': {'wall_width': 4, 'max_width': True}, 'slots': [dict(SLOT)]}]},
+        {'manual_scoops': [{'wall_width': 4, 'max_width': True}]},
+    ], ids=['row', 'manual'])
+    def test_wall_width_and_max_width_together_raise(self, spec):
+        with pytest.raises(ValueError, match='give wall_width or max_width, not both'):
+            block(**spec)
 
     def test_unknown_scoop_key_raises(self):
         with pytest.raises(ValueError, match='scoop: unknown key.*lenght'):

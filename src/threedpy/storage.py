@@ -22,6 +22,8 @@ from gridfinity_build123d import (
 from gridfinity_build123d import Label as BinLabel
 
 from threedpy.constants import (
+    GF_BASE_BOTTOM_Z,
+    GF_BASE_HEIGHT,
     GF_BIN_FLOOR_Z,
     GF_TOP_BELOW_Z_MM,
     GFU_GRID,
@@ -30,19 +32,20 @@ from threedpy.constants import (
 )
 from threedpy.defaults import (
     BIN_LABEL_MIN_Z,
+    BIN_SCOOP_RADIUS,
     BIN_SCOOP_RADIUS_MARGIN,
+    BLOCK_SCOOP_DEPTH_RATIO,
+    BLOCK_SCOOP_EDGE_MARGIN,
+    BLOCK_SCOOP_FLOOR_MARGIN,
+    BLOCK_SCOOP_WALL_WIDTH,
     BLOCK_TYPE,
     FONT_SIZE,
     LABEL_SPACING,
     MIN_SLOT_SPACING,
     ROW_MARKER_SIZE,
-    ROW_SCOOP_EDGE_MARGIN,
     ROW_SCOOP_LENGTH_RATIO,
-    BIN_SCOOP_RADIUS,
-    BLOCK_SCOOP_DEPTH_RATIO,
-    BLOCK_SCOOP_WALL_WIDTH,
 )
-from threedpy.features import Label, LabelType, Slot, BlockScoop, BlockScoopType
+from threedpy.features import BlockScoop, BlockScoopType, Label, LabelType, Slot
 from threedpy.util import DoublyLinkedList, build_gf_base, build_gf_box
 
 logger = logging.getLogger(__name__)
@@ -140,16 +143,18 @@ class BlockRow:
 
     @property
     def x_scoop(self) -> float:
-        """X-position (center) of the row's slots, for a full-row scoop."""
+        """X-position (center) of the row's slots, for its label."""
         left = min(slot.x - slot.scoop_width / 2 for slot in self.slots)
-        return left + self.x_scoop_span / 2
+        right = max(slot.x + slot.scoop_width / 2 for slot in self.slots)
+        return (left + right) / 2
 
     @property
     def x_scoop_span(self) -> float:
-        """X distance from the first slot's left edge to the last slot's right edge."""
+        """Flat width of the row scoop: centered on the block and covering every slot's scoop_width,
+        so its walls end the same distance from both X edges."""
         left = min(slot.x - slot.scoop_width / 2 for slot in self.slots)
         right = max(slot.x + slot.scoop_width / 2 for slot in self.slots)
-        return right - left
+        return 2 * max(-left, right)
 
     @property
     def x_slot_spacing(self) -> float:
@@ -202,10 +207,41 @@ class BlockRow:
         return min(self.slots, key=lambda slot: slot.y_footprint)
 
     @property
+    def scoop_span(self) -> tuple[float, float] | None:
+        """Low/high Y (block coordinates) shared by every slot's item scoop_span(), e.g. the
+        stretch where all its socket extensions' middles overlap; None when its scoop_slot has no
+        span (the scoop is then centered on the row)."""
+        if self.scoop_slot.scoop_span is None:
+            return None
+        lows, highs = [], []
+        for slot in self.slots:
+            span = slot.scoop_span
+            if span is None or slot.item is None:
+                continue
+            dy = slot.item.rotation.direction[1]
+            # item_solid is centered on the slot, so its base sits half its length back
+            base = slot.y - dy * slot.item_size.Y / 2
+            low, high = sorted((base + dy * span[0], base + dy * span[1]))
+            lows.append(low)
+            highs.append(high)
+        low, high = max(lows), min(highs)
+        if low >= high:
+            raise ValueError(f"[!] row '{self.name}': its slots' scoop spans don't overlap")
+        return low, high
+
+    @property
+    def scoop_margin(self) -> float:
+        """The largest scoop_margin among the row's items, so the scoop clears every span end."""
+        return max((slot.item.scoop_margin for slot in self.slots if slot.item), default=0.0)
+
+    @property
     def scoop_offset(self) -> tuple[float, float]:
-        """X/Y shift from the row's scoop position to its scoop_slot's scoop center: (0, 0) unless
-        that slot's item has a scoop_span(), e.g. a socket extension's middle."""
-        return self.scoop_slot.scoop_offset
+        """X/Y shift from the row's scoop position to the center of its scoop_span; (0, 0) when it
+        has none."""
+        span = self.scoop_span
+        if span is None:
+            return (0.0, 0.0)
+        return (0.0, (span[0] + span[1]) / 2 - self.y_scoop)
 
     @property
     def y_scoop(self) -> float:
@@ -231,7 +267,7 @@ class BlockRow:
         return slot
 
     def build_row_marker(self, width: float) -> None:
-        """Draw ROW_MARKER_SIZE (YxZ) box at the surface along the X-width of the row's Y position."""
+        """Draw a ROW_MARKER_SIZE (YxZ) box at the surface across the row's X-width at its Y."""
         Box(
             width,
             ROW_MARKER_SIZE,
@@ -245,11 +281,15 @@ class BlockRow:
         if self.has_row_label and len(self):
             self.label.build(top_face, (self.x_scoop, self.y_label))
 
-    def build_scoop(self, coords: tuple, x_block_width: float) -> None:
-        """Build the row scoop."""
+    def build_scoop(self, coords: tuple, x_block_width: float, max_depth: float) -> None:
+        """Build the row scoop, no deeper than max_depth."""
         if not self.has_row_scoop or not len(self):
             return
         self.scoop.fill_unset(self.default_scoop(x_block_width))
+        if self.scoop.max_width:
+            limit = self.max_wall_width(x_block_width, self.scoop.fillet_radius)
+            self.scoop.widen_walls(limit, f"row '{self.name}'")
+        self.scoop.limit_depth(max_depth, f"row '{self.name}'")
         self.check_scoop_length()
         dx, dy = self.scoop_offset
         coords = (coords[0] + dx, coords[1] + dy, *coords[2:])
@@ -259,25 +299,25 @@ class BlockRow:
 
     def default_scoop(self, x_block_width: float) -> BlockScoop:
         """Single-row scoop across its slots' scoop widths, as deep as half the widest one, with
-        the smallest rim fillet any of its slots allows. Its length comes from its scoop_slot: that
-        slot's scoop_span() less the rim fillet and margin at each end, or a fraction of the slot's
-        Y footprint when it has no span."""
+        its rim fillet searched up to its default_fillet_radius (smaller with max_width). Its length
+        is its scoop_span less that rim fillet and the margin at each end, or a fraction of its
+        scoop_slot's Y footprint when it has no span."""
 
-        radius = max((slot.scoop_width * BLOCK_SCOOP_DEPTH_RATIO for slot in self.slots), default=0.0)
-        fillet_radius = min((slot.scoop_fillet_radius for slot in self.slots), default=0.0)
-        # extend the scoop walls towards the block's X edges, keeping the rim fillet off them
-        edge_margin = fillet_radius + ROW_SCOOP_EDGE_MARGIN
-        max_wall_width = (x_block_width - self.x_scoop_span) / 2 - edge_margin
+        radius = max(
+            (slot.scoop_width * BLOCK_SCOOP_DEPTH_RATIO for slot in self.slots), default=0.0
+        )
+        fillet_radius = self.scoop.default_fillet_radius
         # only take default width if it doesn't touch/exceed the edges
-        scoop_wall_width = min(max_wall_width, BLOCK_SCOOP_WALL_WIDTH)
+        scoop_wall_width = min(
+            self.max_wall_width(x_block_width, fillet_radius), BLOCK_SCOOP_WALL_WIDTH
+        )
 
-        span = self.scoop_slot.scoop_span
-        item = self.scoop_slot.item
-        if span is None or item is None:
+        span = self.scoop_span
+        if span is None:
             length = self.y_min_slot * ROW_SCOOP_LENGTH_RATIO
         else:
             # the rim fillet rounds past each end of the scoop, so keep it off the span's ends too
-            length = span[1] - span[0] - 2 * (fillet_radius + item.scoop_margin)
+            length = span[1] - span[0] - 2 * (fillet_radius + self.scoop_margin)
 
         return BlockScoop(
             flat_width=self.x_scoop_span,
@@ -288,17 +328,20 @@ class BlockRow:
             type=BlockScoopType.ROW
         )
 
+    def max_wall_width(self, x_block_width: float, fillet_radius: float) -> float:
+        """Widest the row scoop's walls can reach towards the block's X edges, keeping a rim fillet
+        up to fillet_radius BLOCK_SCOOP_EDGE_MARGIN inside them."""
+        edge_margin = fillet_radius + BLOCK_SCOOP_EDGE_MARGIN
+        return (x_block_width - self.x_scoop_span) / 2 - edge_margin
+
     def check_scoop_length(self) -> None:
-        """Warn when the row scoop, rounded rim included, reaches the ends of its scoop_slot's
-        scoop_span()."""
-        slot = self.scoop_slot
-        span = slot.scoop_span
+        """Warn when the row scoop, rounded rim included, reaches the ends of its scoop_span."""
+        span = self.scoop_span
         reach = self.scoop.length + 2 * self.scoop.fillet_radius
         if span is not None and reach >= span[1] - span[0]:
             logger.warning(
-                f"row '{self.name}': scoop ({reach:.2f}mm with its rim) reaches the ends of slot "
-                f"'{slot.label.label_text}' {type(slot.item).__name__} span "
-                f'({span[1] - span[0]:.2f}mm)'
+                f"row '{self.name}': scoop ({reach:.2f}mm with its rim) reaches the ends of its "
+                f"slots' shared span ({span[1] - span[0]:.2f}mm)"
             )
 
     def __iter__(self) -> Iterator[Slot]:
@@ -500,8 +543,11 @@ class StorageBlock(Storage):
         super().__post_init__()
         if not isinstance(self.type, StorageBlockType):
             self.type = StorageBlockType(self.type)
-        for scoop in self.manual_scoops:
+        for i, scoop in enumerate(self.manual_scoops, start=1):
             scoop.fill_manual_defaults()
+            if scoop.max_width:
+                owner = f'storage_block manual scoop {i}'
+                scoop.widen_walls(self.max_manual_wall_width(scoop), owner)
 
     @property
     def num_rows(self) -> int:
@@ -514,6 +560,16 @@ class StorageBlock(Storage):
         for row in self.rows:
             ht += row.height
         return ht
+
+    @property
+    def max_scoop_depth(self) -> float:
+        """Deepest a scoop may cut below the top face: down to BLOCK_SCOOP_FLOOR_MARGIN above a
+        gridfinity base's profile, or above a plain block's bottom. Measured on the gridfinity
+        block even in arrange mode, so its plain box previews the scoops the print will get."""
+        if self.is_gridfinity:
+            top = self.z_mm - GF_TOP_BELOW_Z_MM
+            return top - (GF_BASE_BOTTOM_Z + GF_BASE_HEIGHT + BLOCK_SCOOP_FLOOR_MARGIN)
+        return self.z_mm - BLOCK_SCOOP_FLOOR_MARGIN
 
     @property
     def is_gridfinity(self) -> bool:
@@ -651,18 +707,21 @@ class StorageBlock(Storage):
 
     def build_row_scoop(self, row: BlockRow, surface_z: float) -> None:
         """Generate the BlockScoop across an entire BlockRow, if it has one."""
-        row.build_scoop((row.x_scoop, row.y_scoop, surface_z), self.x_mm)
+        coords = (0.0, row.y_scoop, surface_z)
+        row.build_scoop(coords, self.x_mm, self.max_scoop_depth)
 
     def build_manual_scoop(self, scoop: BlockScoop, surface_z: float) -> None:
         """Generate one of the block's MANUAL scoops at its own x/y/rotation."""
         coords = (scoop.x, scoop.y, surface_z)
+        index = self.manual_scoops.index(scoop) + 1
+        scoop.limit_depth(self.max_scoop_depth, f'storage_block manual scoop {index}')
         scoop.log_build(coords)
         with Locations(coords):
             scoop.build(Mode.ADD if self.debug else Mode.SUBTRACT, rotation=scoop.rotation)
 
     def build_slot_scoop(self, row: BlockRow, slot: Slot, surface_z: float) -> None:
         """Generate a single slot's own BlockScoop, if it has one."""
-        slot.build_scoop((slot.x, row.y_scoop, surface_z))
+        slot.build_scoop((slot.x, row.y_scoop, surface_z), self.max_scoop_depth)
 
     def log_build(self) -> None:
         logger.debug('-'*25)
@@ -689,6 +748,22 @@ class StorageBlock(Storage):
         self.validate_x_spacing()
         self.validate_y_bounds()
         self.validate_scoop_bounds()
+
+    def max_manual_wall_width(self, scoop: BlockScoop) -> float:
+        """Widest a MANUAL scoop's walls can reach, at its position and rotation, keeping its
+        largest possible rim fillet BLOCK_SCOOP_EDGE_MARGIN inside the block's edges."""
+        angle = math.radians(scoop.rotation)
+        cos, sin = abs(math.cos(angle)), abs(math.sin(angle))
+        margin = scoop.fillet_radius + BLOCK_SCOOP_EDGE_MARGIN
+        half_l = scoop.length / 2
+        # half width the turned rim may reach, from each axis' room: half_w * cos + half_l * sin
+        # along X and half_w * sin + half_l * cos along Y, for half_w = flat_width / 2 + wall
+        limits = []
+        if cos > 1e-9:
+            limits.append((self.x_mm / 2 - abs(scoop.x) - margin - half_l * sin) / cos)
+        if sin > 1e-9:
+            limits.append((self.y_mm / 2 - abs(scoop.y) - margin - half_l * cos) / sin)
+        return min(limits) - scoop.flat_width / 2
 
     def validate_scoop_bounds(self) -> None:
         """Check every MANUAL scoop's rim stays on the block, after its rotation."""

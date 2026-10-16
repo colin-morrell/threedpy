@@ -26,6 +26,9 @@ GFU_HEIGHT: float = 7.0  # from gf spec https://gridfinity.xyz/assets/img/spec_d
 GF_TOP_BELOW_Z_MM: float = 2.5
 # height of a gridfinity bin's compartment floor (mm)
 GF_BIN_FLOOR_Z: float = 5.3
+# a gridfinity base's bottom, and the height of its stepped profile above that (mm)
+GF_BASE_BOTTOM_Z: float = -2.5
+GF_BASE_HEIGHT: float = 4.75
 
 """ storageBlock """
 STORAGE_BLOCK_KEYS = (

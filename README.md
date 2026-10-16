@@ -68,7 +68,7 @@ uv run threedpy --help
 # storage block laid out and sized by the YAML's "storage_block" mapping, exported to out_dir
 uv run threedpy build src/threedpy/examples/husky-sockets-vert-mm.yaml -o
 
-# several blocks at once, previewed in a column
+# several blocks at once, previewed in a row
 uv run threedpy build src/threedpy/examples/etorx.yaml src/threedpy/examples/solder-station.yaml
 
 # override the YAML's layout type and size
@@ -135,7 +135,14 @@ slots:
 
 `slot_scoop` (global, row or slot) cuts a finger scoop over each slot: `true` for the slot's
 default, a mapping to override `flat_width`, `wall_width`, `depth`, `length` or `fillet_radius`, or
-`false` to opt a slot out. Scoops turn with their slot's `rotation`. `row_scoop` (global or row)
+`false` to opt a slot out. `fillet_radius` is the largest rim rounding to try (2.5mm by default);
+each rim gets the largest radius between 0.5mm and that which works, or is left sharp if none does.
+No scoop cuts within 1mm of a gridfinity block's base (or a plain block's bottom): deeper depths are
+clamped there with a warning, and `max_depth: true` (instead of `depth`) cuts exactly that deep.
+For row and manual scoops, `max_width: true` (instead of `wall_width`) reaches the walls out to the
+block's edges, keeping the rounded rim 0.5mm inside them. Its rim is capped at 0.5mm unless
+`fillet_radius` says otherwise, so the walls get the room a larger rim would need.
+Scoops turn with their slot's `rotation`. `row_scoop` (global or row)
 cuts one scoop across a whole row instead; rows of `left`/`right` slots can't have one yet.
 `storage_block.manual_scoops` places scoops anywhere on the block, independent of the slots:
 `x`/`y` in mm from the block's center, `rotation` in degrees (0 runs the scoop along Y), and any of

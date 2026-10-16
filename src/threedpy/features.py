@@ -1,5 +1,6 @@
 import contextvars
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import cached_property
@@ -35,15 +36,18 @@ from build123d import (
 from threedpy.constants import FONT_PATH
 from threedpy.defaults import (
     BLOCK_SCOOP_DEPTH_RATIO,
-    BLOCK_SCOOP_FILLET_FALLBACK_RADIUS,
+    BLOCK_SCOOP_FILLET_MIN_RADIUS,
     BLOCK_SCOOP_FILLET_RADIUS,
+    BLOCK_SCOOP_FILLET_REFINE,
+    BLOCK_SCOOP_FILLET_STEP,
     BLOCK_SCOOP_FLAT_WIDTH,
     BLOCK_SCOOP_LENGTH,
+    BLOCK_SCOOP_MAX_WIDTH_FILLET_RADIUS,
+    BLOCK_SCOOP_RIM_TOLERANCE,
     BLOCK_SCOOP_WALL_WIDTH,
     DRAW_SOLIDS_SINK_RATIO,
     FONT_SIZE,
     LABEL_HEIGHT,
-    SCOOP_RIM_TOLERANCE,
     SLOT_DEPTH_CLEARANCE,
 )
 from threedpy.item import ITEM_TYPES, Item, Orientation, Rotation, Shape
@@ -64,6 +68,51 @@ class BlockScoopType(Enum):
     MANUAL = 'manual'
 
 
+def largest_fillet_radius(max_radius: float, works: Callable[[float], bool]) -> float | None:
+    """The largest rim fillet radius, up to max_radius, that works(radius) accepts, or None.
+
+    Tries max_radius, then BLOCK_SCOOP_FILLET_MIN_RADIUS, then binary-searches the
+    BLOCK_SCOOP_FILLET_STEP radii between them; if the minimum fails, scans those radii upward
+    instead, in case a larger one steps past an odd geometric coincidence. Either way it finally
+    checks BLOCK_SCOOP_FILLET_REFINE above the largest that works, if that's still below the
+    next radius that failed.
+    """
+    radii = []
+    radius = BLOCK_SCOOP_FILLET_MIN_RADIUS
+    while radius < max_radius - 1e-9:
+        radii.append(radius)
+        radius += BLOCK_SCOOP_FILLET_STEP
+    radii.append(max_radius)
+
+    if works(radii[-1]):
+        return radii[-1]
+    if len(radii) == 1:
+        return None
+    # lo works, hi fails
+    hi = len(radii) - 1
+    if works(radii[0]):
+        lo = 0
+        while hi - lo > 1:
+            mid = (lo + hi) // 2
+            lo, hi = (mid, hi) if works(radii[mid]) else (lo, mid)
+    else:
+        found = None
+        for i in range(1, len(radii) - 1):
+            if works(radii[i]):
+                found = i
+            elif found is not None:
+                hi = i
+                break
+        if found is None:
+            return None
+        lo = found
+    best = radii[lo]
+    between = best + BLOCK_SCOOP_FILLET_REFINE
+    if between < radii[hi] - 1e-9 and works(between):
+        best = between
+    return best
+
+
 @dataclass
 class BlockScoop:
     """BlockScoop
@@ -80,6 +129,10 @@ class BlockScoop:
         x (float): MANUAL scoops: X position of its center on the block (mm, block-centered).
         y (float): MANUAL scoops: Y position of its center on the block (mm, block-centered).
         rotation (float): MANUAL scoops: degrees about Z; 0 runs its length along Y.
+        max_depth (bool): cut as deep as the block allows (StorageBlock.max_scoop_depth) instead
+            of depth.
+        max_width (bool): row and manual scoops: reach the walls out as far as the block's edges
+            allow (less the rim fillet and BLOCK_SCOOP_EDGE_MARGIN) instead of wall_width.
 
     Dimensions left at 0 are filled in by its owner (see fill_unset), e.g. a row scoop's, which
     depend on where the row's slots end up.
@@ -94,6 +147,8 @@ class BlockScoop:
         'flat_width', 'wall_width', 'depth', 'length', 'fillet_radius'
     )
     PLACEMENT: ClassVar[tuple[str, ...]] = ('x', 'y', 'rotation')
+    # YAML keys that are neither dimensions nor placement
+    OPTIONS: ClassVar[tuple[str, ...]] = ('max_depth', 'max_width')
 
     flat_width: float = 0
     wall_width: float = 0
@@ -104,6 +159,8 @@ class BlockScoop:
     x: float = 0.0
     y: float = 0.0
     rotation: float = 0.0
+    max_depth: bool = False
+    max_width: bool = False
 
     @property
     def width(self) -> float:
@@ -160,60 +217,95 @@ class BlockScoop:
         --> Rounds the whole topmost edge group the cut made: the rim plus the slot-opening edges
             it crosses. Filleting only the rim crashes OCCT where it stops against an item's
             curved surface (e.g. a socket extension's taper).
-        --> Tries fillet_radius, then BLOCK_SCOOP_FILLET_FALLBACK_RADIUS; if both fail, the rim is
-            left sharp.
-        --> Skipped (rim left sharp) when the walls are narrower than the fillet, or the rim isn't
-            at the surface or has BSPLINE edges; each can crash OCCT outright rather than raise."""
+        --> Uses the largest radius that works, up to fillet_radius (see largest_fillet_radius);
+            if none does, the rim is left sharp.
+        --> Skipped (rim left sharp) when the walls are narrower than the smallest fillet, or the
+            rim isn't at the surface or has BSPLINE edges; each can crash OCCT outright rather
+            than raise."""
 
-        # TODO --> clean up this mess
-
-        # the fillet spreads fillet_radius across the surface, past a narrow wall into the slots
-        if self.wall_width < self.fillet_radius:
+        # the fillet spreads its radius across the surface, past a narrow wall into the slots
+        if self.wall_width < BLOCK_SCOOP_FILLET_MIN_RADIUS:
             logger.warning(
-                f'scoop wall ({self.wall_width:.2f}mm) narrower than fillet radius '
-                f'({self.fillet_radius}mm); not filleting'
+                f'[!] scoop wall ({self.wall_width:.2f}mm) narrower than the smallest fillet '
+                f'({BLOCK_SCOOP_FILLET_MIN_RADIUS}mm); not filleting'
             )
             return
         bb = scoop.bounding_box()
-        tolerance = SCOOP_RIM_TOLERANCE
+        tolerance = BLOCK_SCOOP_RIM_TOLERANCE
 
         top = edges(Select.LAST).group_by(Axis.Z)[-1]
         # a rim off the surface leaves curved wall/surface intersections, which can crash OCCT
         if abs(top[0].center().Z - bb.max.Z) > tolerance:
             logger.warning(
-                f'scoop rim (z={bb.max.Z:.2f}) not at top surface '
+                f'[!] scoop rim (z={bb.max.Z:.2f}) not at top surface '
                 f'(z={top[0].center().Z:.2f}); not filleting'
             )
             return
         # a fresh rim on a flat surface is lines (+ arcs at round openings)
         # BSPLINEs are leftovers of an overlapping scoop's fillet, e.g. neighboring slot scoops
         if any(e.geom_type == GeomType.BSPLINE for e in top):
-            logger.warning('scoop rim overlaps another scoop\'s fillet; not filleting')
+            logger.warning('[!] scoop rim overlaps another scoop\'s fillet; not filleting')
             return
-        radii = [self.fillet_radius]
-        if BLOCK_SCOOP_FILLET_FALLBACK_RADIUS < self.fillet_radius:
-            radii.append(BLOCK_SCOOP_FILLET_FALLBACK_RADIUS)
-        for radius in radii:
+        # try each radius on a copy, so a failed attempt leaves the part untouched
+        context = BuildPart._get_context()
+        if context is None or context.part is None:
+            raise ValueError('[!] BlockScoop.fillet_rim() needs an active BuildPart')
+        part = context.part
+
+        def works(radius: float) -> bool:
             try:
-                fillet(top, radius=radius)
+                part.fillet(radius, list(top))
             except ValueError:
-                continue
-            if radius != self.fillet_radius:
-                logger.warning(
-                    f'[!] scoop rim fillet (radius {self.fillet_radius}) failed, used {radius}'
-                )
+                return False
+            return True
+
+        radius = largest_fillet_radius(self.fillet_radius, works)
+        if radius is None:
+            logger.warning(
+                f'[!] scoop rim fillet failed at every radius up to {self.fillet_radius}, '
+                'leaving it sharp'
+            )
             return
-        logger.warning(
-            f"[!] scoop rim fillet (radius {', '.join(map(str, radii))}) failed, leaving it sharp"
-        )
+        if radius < self.fillet_radius:
+            logger.info(f'[-] scoop rim fillet: radius {self.fillet_radius} failed, used {radius}')
+        # through the builder, so later scoops see the usual edge history
+        fillet(top, radius=radius)
+
+    def widen_walls(self, limit: float, owner: str) -> None:
+        """Set wall_width to limit (max_width), or keep it and warn when there's no room."""
+        if limit <= 0:
+            logger.warning(
+                f'[!] {owner} scoop: no room to widen its walls; keeping {self.wall_width}'
+            )
+            return
+        self.wall_width = limit
+
+    @property
+    def default_fillet_radius(self) -> float:
+        """Rim fillet cap when none is set: smaller for max_width scoops, so their walls can take
+        the room a larger rim would need."""
+        return BLOCK_SCOOP_MAX_WIDTH_FILLET_RADIUS if self.max_width else BLOCK_SCOOP_FILLET_RADIUS
+
+    def limit_depth(self, limit: float, owner: str) -> None:
+        """Set depth to limit (the block's floor) when max_depth is set; otherwise clamp it there,
+        warning when it would cut deeper."""
+        if self.max_depth:
+            self.depth = limit
+            return
+        if self.depth > limit:
+            logger.warning(
+                f'[!] {owner} scoop depth {self.depth:.2f}mm below block floor -> using max '
+                f'{limit:.2f}mm'
+            )
+            self.depth = limit
 
     def fill_manual_defaults(self) -> None:
-        """Fill a MANUAL scoop's unset (0) dimensions; depth follows its (possibly given) flat width."""
+        """Fill a MANUAL scoop's unset dimensions; depth follows its (possibly given) flat width."""
         self.fill_unset(BlockScoop(
             flat_width=BLOCK_SCOOP_FLAT_WIDTH,
             wall_width=BLOCK_SCOOP_WALL_WIDTH,
             length=BLOCK_SCOOP_LENGTH,
-            fillet_radius=BLOCK_SCOOP_FILLET_RADIUS,
+            fillet_radius=self.default_fillet_radius,
         ))
         if self.depth == 0:
             self.depth = self.flat_width * BLOCK_SCOOP_DEPTH_RATIO
@@ -234,13 +326,18 @@ class BlockScoop:
 
     @classmethod
     def check_keys(cls, spec: Any, owner: str, placement: bool = False) -> None:
-        """Raise on mapping keys that aren't BlockScoop dimensions (plus x/y/rotation when placement),
-        so YAML typos fail at load time."""
+        """Raise on mapping keys that aren't BlockScoop dimensions or options (plus x/y/rotation
+        when placement), or that contradict each other, so YAML mistakes fail at load time."""
         if isinstance(spec, dict):
-            unknown = set(spec) - set(cls.DIMENSIONS) - set(cls.PLACEMENT if placement else ())
+            allowed = {*cls.DIMENSIONS, *cls.OPTIONS, *(cls.PLACEMENT if placement else ())}
+            unknown = set(spec) - allowed
             if unknown:
                 err = '[!] {} scoop: unknown key(s): {}'.format(owner, ', '.join(sorted(unknown)))
                 raise ValueError(err)
+            if spec.get('max_depth') and 'depth' in spec:
+                raise ValueError(f'[!] {owner} scoop: give depth or max_depth, not both')
+            if spec.get('max_width') and 'wall_width' in spec:
+                raise ValueError(f'[!] {owner} scoop: give wall_width or max_width, not both')
 
 
 class LabelType(Enum):
@@ -366,13 +463,6 @@ class Slot:
         return self.depth + SLOT_DEPTH_CLEARANCE
 
     @property
-    def scoop_fillet_radius(self) -> float:
-        """Rim fillet radius for scoops over this slot."""
-        if self.item is None:
-            return BLOCK_SCOOP_FILLET_RADIUS
-        return self.item.scoop_fillet_radius
-
-    @property
     def scoop_span(self) -> tuple[float, float] | None:
         """The item's scoop_span() for a HORIZONTAL item, or None to center scoops on the slot."""
         if self.item is None or self.item.orientation is not Orientation.HORIZONTAL:
@@ -472,9 +562,11 @@ class Slot:
         if self.label.type is LabelType.SLOT:
             self.label.build(top_face, coords)
 
-    def build_scoop(self, coords: tuple) -> None:
+    def build_scoop(self, coords: tuple, max_depth: float) -> None:
+        """Build the slot's own scoop at coords plus its scoop_offset, no deeper than max_depth."""
         if self.scoop.type is not BlockScoopType.SLOT:
             return
+        self.scoop.limit_depth(max_depth, f"slot '{self.label.label_text}'")
         self.check_scoop_length()
         dx, dy = self.scoop_offset
         coords = (coords[0] + dx, coords[1] + dy, *coords[2:])
@@ -501,15 +593,16 @@ class Slot:
         if span is None or self.item is None:
             length = BLOCK_SCOOP_LENGTH
         else:
-            # the rim fillet rounds past each end of the scoop, so keep it off the span's ends too
-            reserve = self.scoop_fillet_radius + self.item.scoop_margin
+            # the rim fillet rounds past each end of the scoop, so keep even the largest one the
+            # radius search might pick off the span's ends
+            reserve = BLOCK_SCOOP_FILLET_RADIUS + self.item.scoop_margin
             length = span[1] - span[0] - 2 * reserve
         return BlockScoop(
             flat_width=self.scoop_width,
             wall_width=BLOCK_SCOOP_WALL_WIDTH,
             depth=self.scoop_width * BLOCK_SCOOP_DEPTH_RATIO,
             length=length,
-            fillet_radius=self.scoop_fillet_radius,
+            fillet_radius=BLOCK_SCOOP_FILLET_RADIUS,
             type=BlockScoopType.SLOT,
         )
 

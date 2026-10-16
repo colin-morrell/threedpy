@@ -12,12 +12,22 @@ import pytest
 from build123d import Align, Axis, Box, BuildPart, Mode, Part, Plane
 
 from threedpy.defaults import (
+    BLOCK_SCOOP_EDGE_MARGIN,
+    BLOCK_SCOOP_FILLET_RADIUS,
     BLOCK_SCOOP_LENGTH,
+    BLOCK_SCOOP_MAX_WIDTH_FILLET_RADIUS,
     ROW_SCOOP_LENGTH_RATIO,
     SLOT_DEPTH_CLEARANCE,
     SLOT_DIAMETER_CLEARANCE,
 )
-from threedpy.features import BlockScoop, BlockScoopType, Label, LabelType, Slot
+from threedpy.features import (
+    BlockScoop,
+    BlockScoopType,
+    Label,
+    LabelType,
+    Slot,
+    largest_fillet_radius,
+)
 from threedpy.io import load_storage_block
 from threedpy.item import (
     CylinderItem,
@@ -28,7 +38,7 @@ from threedpy.item import (
     Shape,
     SocketExtension,
 )
-from threedpy.storage import StorageBin
+from threedpy.storage import StorageBin, StorageBlock
 
 # surface block the slots are cut into: top face at Z=0
 SURFACE = (60.0, 60.0, 20.0)
@@ -135,8 +145,8 @@ class TestItemDimensions:
         assert item.bot_rad == pytest.approx(expected)
 
     @pytest.mark.parametrize(('drive', 'length', 'expected'), [
-        ('1/4', 50.7, (17.988, 41.6)),
-        ('3/8', 76.3, (22.054, 62.5)),
+        ('1/4', 50.7, (18.367, 41.2)),
+        ('3/8', 76.3, (22.431, 62.3)),
     ])
     def test_scoop_span_is_the_straight_middle(self, drive, length, expected):
         item = SocketExtension(drive=drive, total_length=length)
@@ -149,8 +159,10 @@ class TestItemDimensions:
     def test_drive_fills_only_unset_dimensions(self):
         item = SocketExtension(drive='1/4', total_length=50.7, bot_len=20)
         assert item.drive is Drive.QUARTER_INCH
-        assert item.bot_len == 20
-        assert item.top_len == Drive.QUARTER_INCH.dimensions['top_len']
+        assert item.bot_len == pytest.approx(20 + SLOT_DEPTH_CLEARANCE)
+        assert item.top_len == pytest.approx(
+            Drive.QUARTER_INCH.dimensions['top_len'] + SLOT_DEPTH_CLEARANCE
+        )
 
     def test_socket_extension_square_end_corners_sit_on_the_shaft(self):
         item = SocketExtension(drive='1/4', total_length=50.7)
@@ -221,7 +233,7 @@ class TestSlotMeasurements:
         along = (start + end) / 2 - item.total_length / 2
         assert slot.scoop_offset == pytest.approx((direction[0] * along, direction[1] * along),
                                                   abs=1e-3)
-        reserve = item.scoop_fillet_radius + item.scoop_margin
+        reserve = BLOCK_SCOOP_FILLET_RADIUS + item.scoop_margin
         assert slot.default_scoop().length == pytest.approx(end - start - 2 * reserve)
 
     @pytest.mark.parametrize('item', [
@@ -358,6 +370,38 @@ class TestManualScoop:
             self.build([{'x': 30, 'y': 0, 'rotation': 45}])
 
 
+class TestLargestFilletRadius:
+    def search(self, max_radius, works):
+        tried = []
+
+        def check(radius):
+            tried.append(radius)
+            return works(radius)
+
+        return largest_fillet_radius(max_radius, check), tried
+
+    def test_max_works(self):
+        assert self.search(2.5, lambda _: True) == (2.5, [2.5])
+
+    @pytest.mark.parametrize(('limit', 'expected', 'tried'), [
+        (2.25, 2.25, [2.5, 0.5, 1.5, 2.0, 2.25]),
+        (1.0, 1.0, [2.5, 0.5, 1.5, 1.0, 1.25]),
+        (0.75, 0.75, [2.5, 0.5, 1.5, 1.0, 0.75]),
+    ])
+    def test_binary_search_then_checks_the_step_between(self, limit, expected, tried):
+        assert self.search(2.5, lambda r: r <= limit) == (expected, tried)
+
+    def test_nothing_works(self):
+        assert self.search(2.5, lambda _: False) == (None, [2.5, 0.5, 1.0, 1.5, 2.0])
+
+    def test_min_failing_scans_upward(self):
+        # an odd radius that fails below one that works
+        assert self.search(2.5, lambda r: r == 1.0) == (1.0, [2.5, 0.5, 1.0, 1.5, 1.25])
+
+    def test_max_below_a_full_step(self):
+        assert self.search(0.75, lambda r: r <= 0.5) == (0.5, [0.75, 0.5])
+
+
 class TestLabel:
     def emboss(self, label: Label) -> BuildPart:
         with BuildPart() as part:
@@ -461,6 +505,19 @@ class TestRowScoopPlacement:
         reserve = scoop.fillet_radius + slot.item.scoop_margin
         assert scoop.length == pytest.approx(end - start - 2 * reserve)
 
+    def test_opposite_slots_share_the_overlap_of_their_middles(self):
+        up = self.extension(76.3, 'up')
+        down = {**self.extension(76.3, 'down'), 'rotation': 'down'}
+        b, row = self.row([up, down])
+        low, high = row.scoop_span
+        # mirror images, so their overlap is centered on the row
+        assert (low + high) / 2 == pytest.approx(row.y, abs=1e-3)
+        assert row.scoop_offset == pytest.approx((0, 0), abs=1e-3)
+        one = next(iter(row)).scoop_span
+        assert high - low < one[1] - one[0]
+        reserve = BLOCK_SCOOP_FILLET_RADIUS + row.scoop_margin
+        assert row.default_scoop(b.x_mm).length == pytest.approx(high - low - 2 * reserve)
+
     def test_shortest_cylinder_keeps_it_centered(self):
         cylinder = {'shape': 'cylinder', 'diameter': 12, 'depth': 40, 'label': 'C'}
         b, row = self.row([self.extension(76.3, 'E'), cylinder])
@@ -480,6 +537,114 @@ class TestRowScoopPlacement:
         with caplog.at_level(logging.WARNING):
             row.check_scoop_length()
         assert 'reaches the ends' in caplog.text
+
+
+class TestScoopMaxWidth:
+    # max_width scoops' smaller rim cap plus the edge margin
+    EDGE = BLOCK_SCOOP_MAX_WIDTH_FILLET_RADIUS + BLOCK_SCOOP_EDGE_MARGIN
+
+    @pytest.mark.parametrize(('x', 'y', 'rotation', 'axis'), [
+        (0, 40, 0, 'x'), (10, 40, 90, 'y'), (0, -40, 45, 'y'),
+    ])
+    def test_manual_scoop_reaches_the_nearest_edge(self, x, y, rotation, axis):
+        spec = {'x': x, 'y': y, 'rotation': rotation, 'length': 10, 'max_width': True}
+        data = {
+            'storage_block': {'x': 2, 'y': 3, 'z': 3, 'manual_scoops': [spec]},
+            'slots': [{'shape': 'cylinder', 'diameter': 10, 'depth': 5}],
+        }
+        b = load_storage_block(data)
+        scoop = b.manual_scoops[0]
+        angle = math.radians(rotation)
+        half_w, half_l = scoop.width / 2, scoop.length / 2
+        reach = {
+            'x': abs(x) + abs(half_w * math.cos(angle)) + abs(half_l * math.sin(angle)),
+            'y': abs(y) + abs(half_w * math.sin(angle)) + abs(half_l * math.cos(angle)),
+        }
+        half = {'x': b.x_mm / 2, 'y': b.y_mm / 2}
+        assert reach[axis] == pytest.approx(half[axis] - self.EDGE)
+        other = 'y' if axis == 'x' else 'x'
+        assert reach[other] <= half[other] - self.EDGE + 1e-9
+
+    def test_row_scoop_reaches_the_block_x_edges(self):
+        slot = {'shape': 'cylinder', 'diameter': 12, 'depth': 50, 'orientation': 'horizontal'}
+        data = {
+            'storage_block': {'x': 2, 'y': 2, 'z': 3},
+            'rows': [{'row_scoop': {'max_width': True}, 'slots': [dict(slot), dict(slot)]}],
+        }
+        b = load_storage_block(data, no_labels=True)
+        b.build(arrange=True)
+        row = next(iter(b.rows))
+        assert row.x_scoop_span / 2 + row.scoop.wall_width == pytest.approx(b.x_mm / 2 - self.EDGE)
+
+    def test_row_scoop_is_centered_between_uneven_slots(self):
+        # different drives' shafts sit off-center between their (evenly spaced) footprints
+        slot = {'shape': 'socket_extension', 'orientation': 'horizontal', 'total_length': 76.3}
+        data = {
+            'storage_block': {'x': 1, 'y': 3, 'z': 3},
+            'rows': [{
+                'row_scoop': {'max_width': True},
+                'slots': [{**slot, 'drive': '1/4'}, {**slot, 'drive': '3/8'}],
+            }],
+        }
+        b = load_storage_block(data, no_labels=True)
+        b.build(arrange=True)
+        row = next(iter(b.rows))
+        left = min(slot.x - slot.scoop_width / 2 for slot in row.slots)
+        right = max(slot.x + slot.scoop_width / 2 for slot in row.slots)
+        assert left != pytest.approx(-right)
+        half = row.x_scoop_span / 2
+        assert half >= max(-left, right)
+        assert half + row.scoop.wall_width == pytest.approx(b.x_mm / 2 - self.EDGE)
+
+    def test_a_given_fillet_radius_is_kept_and_reserved(self):
+        spec = {'x': 0, 'y': 40, 'length': 10, 'max_width': True, 'fillet_radius': 2.0}
+        data = {
+            'storage_block': {'x': 2, 'y': 3, 'z': 3, 'manual_scoops': [spec]},
+            'slots': [{'shape': 'cylinder', 'diameter': 10, 'depth': 5}],
+        }
+        b = load_storage_block(data)
+        scoop = b.manual_scoops[0]
+        assert scoop.fillet_radius == 2.0
+        assert scoop.width / 2 == pytest.approx(b.x_mm / 2 - (2.0 + BLOCK_SCOOP_EDGE_MARGIN))
+
+    def test_no_room_keeps_the_walls_and_warns(self, caplog):
+        scoop = BlockScoop(wall_width=7.5, type=BlockScoopType.MANUAL, max_width=True)
+        with caplog.at_level(logging.WARNING):
+            scoop.widen_walls(-1.0, 'storage_block manual scoop 1')
+        assert scoop.wall_width == 7.5
+        assert 'no room to widen its walls' in caplog.text
+
+
+class TestScoopDepthLimit:
+    def test_gridfinity_block_keeps_a_floor_above_the_base(self):
+        b = StorageBlock(x=2, y=2, z=3)
+        # top 3 * 7 - 2.5 = 18.5, base profile top -2.5 + 4.75 = 2.25, plus the 1mm margin
+        assert b.max_scoop_depth == pytest.approx(18.5 - 3.25)
+
+    def test_plain_block_keeps_a_floor_above_its_bottom(self):
+        b = StorageBlock(x=1.5, y=2, z=3)
+        assert b.max_scoop_depth == pytest.approx(21 - 1)
+
+    def test_too_deep_a_scoop_is_clamped_with_a_warning(self, caplog):
+        scoop = BlockScoop(depth=17, type=BlockScoopType.ROW)
+        with caplog.at_level(logging.WARNING):
+            scoop.limit_depth(15.25, "row 'r'")
+        assert scoop.depth == 15.25
+        assert "row 'r' scoop depth 17.00mm below block floor" in caplog.text
+
+    def test_max_depth_cuts_to_the_limit_without_a_warning(self, caplog):
+        scoop = BlockScoop(depth=6, type=BlockScoopType.SLOT, max_depth=True)
+        with caplog.at_level(logging.WARNING):
+            scoop.limit_depth(15.25, "slot 'A'")
+        assert scoop.depth == 15.25
+        assert caplog.text == ''
+
+    def test_shallower_scoop_is_left_alone(self, caplog):
+        scoop = BlockScoop(depth=6, type=BlockScoopType.SLOT)
+        with caplog.at_level(logging.WARNING):
+            scoop.limit_depth(15.25, "slot 'A'")
+        assert scoop.depth == 6
+        assert caplog.text == ''
 
 
 class TestBinValidation:

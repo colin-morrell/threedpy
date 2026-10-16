@@ -19,7 +19,7 @@ from threedpy.constants import (
     STORAGE_BLOCK_KEYS,
 )
 from threedpy.defaults import BLOCK_TYPE, FONT_SIZE
-from threedpy.features import Label, LabelType, Slot, BlockScoop, BlockScoopType
+from threedpy.features import BlockScoop, BlockScoopType, Label, LabelType, Slot
 from threedpy.item import ITEM_TYPES, Item, Shape
 from threedpy.storage import (
     BlockRow,
@@ -254,6 +254,9 @@ def _slot_scoop(slot: Slot, spec: Any, owner: str) -> BlockScoop:
     if not spec:
         return BlockScoop()
     BlockScoop.check_keys(spec, owner)
+    # TODO --> max_width for slot scoops: stop halfway to the neighboring slots
+    if isinstance(spec, dict) and spec.get('max_width'):
+        raise ValueError(f"[!] {owner} scoop: max_width isn't supported for slot scoops yet")
     scoop = slot.default_scoop()
     for key, value in (spec if isinstance(spec, dict) else {}).items():
         setattr(scoop, key, value)

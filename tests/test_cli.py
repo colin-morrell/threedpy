@@ -101,14 +101,15 @@ class TestMain:
 
     def test_column_stacks_parts_along_y(self, tmp_path, shown):
         paths = [write_block(tmp_path, 'one'), write_block(tmp_path, 'two')]
-        cli.main(['build', *paths, '--arrange'])
+        cli.main(['build', *paths, '--arrange', '--column'])
         first, second = (part.bounding_box() for part in shown[0][0])
         assert second.min.Y == pytest.approx(first.max.Y + PREVIEW_GAP, abs=1e-4)
         assert second.min.X == pytest.approx(first.min.X, abs=1e-4)
 
-    def test_row_lines_parts_up_along_x(self, tmp_path, shown):
+    @pytest.mark.parametrize('flags', [[], ['--row']], ids=['default', '--row'])
+    def test_row_lines_parts_up_along_x(self, tmp_path, shown, flags):
         paths = [write_block(tmp_path, 'one'), write_block(tmp_path, 'two')]
-        cli.main(['build', *paths, '--arrange', '--row'])
+        cli.main(['build', *paths, '--arrange', *flags])
         first, second = (part.bounding_box() for part in shown[0][0])
         assert second.min.X == pytest.approx(first.max.X + PREVIEW_GAP, abs=1e-4)
         assert second.min.Y == pytest.approx(first.min.Y, abs=1e-4)

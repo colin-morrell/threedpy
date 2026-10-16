@@ -28,8 +28,6 @@ from threedpy.defaults import (
     ITEM_ROTATION,
     SLOT_DEPTH_CLEARANCE,
     SLOT_DIAMETER_CLEARANCE,
-    BLOCK_SCOOP_FILLET_RADIUS,
-    SOCKET_EXTENSION_SCOOP_FILLET_RADIUS,
     SOCKET_EXTENSION_SCOOP_MARGIN,
 )
 
@@ -49,50 +47,6 @@ class Shape(Enum):
     PRISM_HEXA = 'prism_hexa'
     PRISM_RECT = 'prism_rect'
     SOCKET_EXTENSION = 'socket_extension'
-
-
-class Drive(Enum):
-    """Socket wrench drive size, which sets a SocketExtension's dimensions.
-
-    Measurements based on Husky extensions.
-    """
-
-    NONE = None
-    QUARTER_INCH = '1/4'
-    THREE_EIGHTHS = '3/8'
-
-    @property
-    def dimensions(self) -> dict[str, float]:
-        """SocketExtension dimensions (mm, before clearance) per drive size."""
-        match self:
-            case Drive.QUARTER_INCH:
-                return {
-                    'bot_rad': 12.3 / 2,
-                    'bot_len': 13.5,
-                    'bot_fillet_rad': 1.0,
-                    'cone': 4.0,
-                    'cone_fillet_rad': 2.0,
-                    'mid_rad': 8.15 / 2,
-                    'mid_top_fillet_rad': 0.5,
-                    'top_width': 6.7,
-                    'top_len': 8.8,
-                    'top_top_fillet_rad': 0.5,
-                }
-            case Drive.THREE_EIGHTHS:
-                return {
-                    'bot_rad': 16.9 / 2,
-                    'bot_len': 17.5,
-                    'bot_fillet_rad': 1.0,
-                    'cone': 4.0,
-                    'cone_fillet_rad': 2.0,
-                    'mid_rad': 12.10 / 2,
-                    'mid_top_fillet_rad': 0.5,
-                    'top_width': 10.15,
-                    'top_len': 13.5,
-                    'top_top_fillet_rad': 0.5,
-                }
-            case _:
-                raise ValueError('Drive.NONE has no dimensions')
 
 
 class Rotation(Enum):
@@ -181,8 +135,6 @@ class Item(ABC):
 
     # TODO --> import stl??
 
-    # rim fillet radius for scoops over this item's slot
-    scoop_fillet_radius: ClassVar[float] = BLOCK_SCOOP_FILLET_RADIUS
     # gap kept between a slot scoop's rounded rim and each end of scoop_span()
     scoop_margin: ClassVar[float] = 0.0
 
@@ -258,6 +210,50 @@ class CylinderItem(Item):
         )
 
 
+class Drive(Enum):
+    """Socket wrench drive size, which sets a SocketExtension's dimensions.
+
+    Measurements based on Husky extensions.
+    """
+
+    NONE = None
+    QUARTER_INCH = '1/4'
+    THREE_EIGHTHS = '3/8'
+
+    @property
+    def dimensions(self) -> dict[str, float]:
+        """SocketExtension dimensions (mm, before clearance) per drive size."""
+        match self:
+            case Drive.QUARTER_INCH:
+                return {
+                    'bot_rad': 12.3 / 2,
+                    'bot_len': 13.5,
+                    'bot_fillet_rad': 1.0,
+                    'cone': 4.0,
+                    'cone_fillet_rad': 2.0,
+                    'mid_rad': 8.15 / 2,
+                    'mid_top_fillet_rad': 0.5,
+                    'top_width': 6.8,
+                    'top_len': 9.0,
+                    'top_top_fillet_rad': 0.5,
+                }
+            case Drive.THREE_EIGHTHS:
+                return {
+                    'bot_rad': 16.9 / 2,
+                    'bot_len': 17.5,
+                    'bot_fillet_rad': 1.0,
+                    'cone': 4.0,
+                    'cone_fillet_rad': 2.0,
+                    'mid_rad': 12.10 / 2,
+                    'mid_top_fillet_rad': 0.5,
+                    'top_width': 10.15,
+                    'top_len': 13.5,
+                    'top_top_fillet_rad': 0.5,
+                }
+            case _:
+                raise ValueError('Drive.NONE has no dimensions')
+
+
 @dataclass
 class SocketExtension(Item):
     """SocketExtension
@@ -270,7 +266,6 @@ class SocketExtension(Item):
         total_length (float): overall length; required.
     """
 
-    scoop_fillet_radius: ClassVar[float] = SOCKET_EXTENSION_SCOOP_FILLET_RADIUS
     scoop_margin: ClassVar[float] = SOCKET_EXTENSION_SCOOP_MARGIN
 
     drive: Drive = Drive.NONE
@@ -307,6 +302,9 @@ class SocketExtension(Item):
         self.bot_rad += self.diameter_clearance / 2
         self.mid_rad += self.diameter_clearance / 2
         self.top_width += self.diameter_clearance
+        self.bot_len += self.depth_clearance
+        self.cone += self.depth_clearance
+        self.top_len += self.depth_clearance
         self.total_length += self.depth_clearance
 
     def scoop_span(self) -> tuple[float, float]:

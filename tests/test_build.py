@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from threedpy.defaults import SOCKET_EXTENSION_SCOOP_FILLET_RADIUS
+from threedpy.defaults import BLOCK_SCOOP_FILLET_RADIUS
 from threedpy.io import load_from_path, load_storage_block
 
 TESTS_DIR = Path(__file__).parent
@@ -88,10 +88,9 @@ def test_positional_block_builds():
     assert len(part.solids()) == 1
 
 
-def test_socket_extension_scoop_rims_round_at_their_own_radius(built):
-    # scoops over socket extensions start at SOCKET_EXTENSION_SCOOP_FILLET_RADIUS, so no slow
-    # failed attempt at the default radius comes first
+def test_socket_extension_scoop_rims_are_rounded(built):
+    # every scoop searches down from BLOCK_SCOOP_FILLET_RADIUS for a radius that works
     block, _, warnings = built(TESTS_DIR / 'socket-extension-scoops.yaml')
     radii = {slot.scoop.fillet_radius for row in block.rows for slot in row}
-    assert radii == {SOCKET_EXTENSION_SCOOP_FILLET_RADIUS}
-    assert not any('scoop rim fillet' in message for message in warnings)
+    assert radii == {BLOCK_SCOOP_FILLET_RADIUS}
+    assert not any('leaving it sharp' in message for message in warnings)

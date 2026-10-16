@@ -100,7 +100,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     build.add_argument(
         'in_paths', nargs='+', metavar='PATH',
-        help='storage_block or storage_bin YAML file(s); several are built and shown in a column'
+        help='storage_block or storage_bin YAML file(s); several are built and shown in a row'
     )
     build.add_argument(
         '-t', '--type',
@@ -123,9 +123,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     build.add_argument('--no-show', action='store_true', help='skip the yacv preview')
     arrangement = build.add_mutually_exclusive_group()
     arrangement.add_argument(
-        '--column', action='store_true', help='preview blocks in a column along Y (default)'
+        '--row', action='store_true', help='preview blocks in a row along X (default)'
     )
-    arrangement.add_argument('--row', action='store_true', help='preview blocks in a row along X')
+    arrangement.add_argument(
+        '--column', action='store_true', help='preview blocks in a column along Y'
+    )
     build.add_argument(
         '--draw-solids',
         action='store_true',
@@ -163,7 +165,7 @@ def main(argv: list[str] | None = None) -> None:
     parts = [build_part(part, arrange=args.arrange) for part in storage]
 
     if not args.no_show:
-        (show_in_row if args.row else show_in_column)(parts, names)
+        (show_in_column if args.column else show_in_row)(parts, names)
     if args.out:
         out_dir = CONFIG.get('out_dir')
         if not out_dir:
